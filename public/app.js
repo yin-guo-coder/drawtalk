@@ -7,6 +7,10 @@ const emptyImage = document.querySelector(".empty-image");
 const understandingPanel = document.querySelector("#understanding-panel");
 const understandingText = document.querySelector("#understanding-text");
 const transcriptPreview = document.querySelector("#transcript-preview");
+const speechInsights = document.querySelector("#speech-insights");
+const speechGender = document.querySelector("#speech-gender");
+const speechAge = document.querySelector("#speech-age");
+const speechEmotion = document.querySelector("#speech-emotion");
 const providerSelect = document.querySelector("#provider-select");
 const versionList = document.querySelector("#version-list");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -113,6 +117,26 @@ function showTranscript(text) {
   understandingText.textContent = "";
 }
 
+function clearSpeechInsights() {
+  speechInsights.hidden = true;
+  speechGender.textContent = "--";
+  speechAge.textContent = "--";
+  speechEmotion.textContent = "--";
+}
+
+function showSpeechInsights(payload) {
+  const speaker = payload.speaker || {};
+  const gender = payload.gender || speaker.gender || "";
+  const age = payload.age || speaker.age || "";
+  const emotion = payload.emotion || speaker.emotion || "";
+  const hasInsight = Boolean(gender || age || emotion);
+
+  speechInsights.hidden = !hasInsight;
+  speechGender.textContent = gender || "--";
+  speechAge.textContent = age || "--";
+  speechEmotion.textContent = emotion || "--";
+}
+
 function showDialogue(userText, assistantText) {
   const lines = [];
 
@@ -198,6 +222,7 @@ function renderVersions(versions = []) {
 
 setStatus("idle");
 showTranscript("");
+clearSpeechInsights();
 renderVersions();
 
 window.drawtalkUi = {
@@ -562,7 +587,8 @@ async function startRecording() {
     startPassiveSpeechFallback();
     isRecording = true;
     micButton.classList.add("is-recording");
-    setStatus("listening", "请开始说话，松开后使用 MiMo 语音模型转写");
+    setStatus("listening", "请开始说话，松开后使用 OSUM 语音模型识别");
+    clearSpeechInsights();
     showTranscript("");
   } catch (error) {
     setStatus("error", error.message || "麦克风不可用");
@@ -583,7 +609,7 @@ function stopRecording() {
 
   isRecording = false;
   micButton.classList.remove("is-recording");
-  setStatus("thinking", "正在使用 MiMo 语音模型转写");
+  setStatus("thinking", "正在使用 OSUM 语音模型识别");
   stopPassiveSpeechFallback();
 
   if (mediaRecorder.state !== "inactive") {
@@ -602,7 +628,7 @@ async function uploadRecording() {
   }
 
   try {
-    setStatus("thinking", "正在上传语音并使用 MiMo 转写");
+    setStatus("thinking", "正在上传语音并使用 OSUM 识别");
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
@@ -617,18 +643,21 @@ async function uploadRecording() {
     }
 
     const transcript = payload.text || "";
+    showSpeechInsights(payload);
     void handleRecognizedText(transcript);
   } catch (error) {
     await waitForPassiveSpeechFallback();
     const fallbackTranscript = getPassiveSpeechTranscript();
 
     if (fallbackTranscript) {
-      setStatus("thinking", "MiMo 语音转写不可用，已使用浏览器识别结果");
+      clearSpeechInsights();
+      setStatus("thinking", "OSUM 语音识别不可用，已使用浏览器识别结果");
       void handleRecognizedText(fallbackTranscript);
       return;
     }
 
-    setStatus("error", error.message || "MiMo 语音转写失败");
+    clearSpeechInsights();
+    setStatus("error", error.message || "OSUM 语音识别失败");
   }
 }
 

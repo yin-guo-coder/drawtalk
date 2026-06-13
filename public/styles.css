@@ -321,6 +321,36 @@ h2 {
   line-height: 1.45;
 }
 
+.speech-insights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.speech-insights[hidden] {
+  display: none;
+}
+
+.speech-insights span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(23, 108, 114, 0.18);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(23, 108, 114, 0.06);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.speech-insights strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
 .provider-control {
   display: flex;
   align-items: center;
