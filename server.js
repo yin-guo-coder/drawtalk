@@ -260,10 +260,26 @@ function getAudioExtension(contentType) {
   return audioExtensions[mimeType] || "webm";
 }
 
+function getTranscriptionPrompt() {
+  return process.env.TRANSCRIBE_PROMPT || [
+    "这是一段中文语音指令，用于 AI 文生图工具。",
+    "请优先识别成画面描述、主体、风格、构图、比例和确认命令。",
+    "常见词包括：生成、画、确认、不对、改成、赛博朋克、鱼、猫、狗、人物、机器人、城市、横版、竖版、16:9、16:10。",
+    "如果听到“一只赛博朋克的鱼”，不要写成“雨衣”或“语音”。"
+  ].join("\n");
+}
+
+function normalizeTranscriptForImagePrompt(text) {
+  return String(text || "")
+    .trim()
+    .replace(/(一[只条][^，。,.!?！？]*?赛博朋克(?:风格)?的?)(雨衣|语音)/gu, "$1鱼");
+}
+
 async function transcribeWithOpenAI(audioBuffer, contentType) {
   if (process.env.MOCK_TRANSCRIPT) {
     return {
-      text: process.env.MOCK_TRANSCRIPT,
+      text: normalizeTranscriptForImagePrompt(process.env.MOCK_TRANSCRIPT),
+      rawText: process.env.MOCK_TRANSCRIPT,
       source: "mock"
     };
   }
@@ -276,6 +292,7 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
 
   const model = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
   const language = process.env.TRANSCRIBE_LANGUAGE || "zh";
+  const prompt = getTranscriptionPrompt();
   const extension = getAudioExtension(contentType);
   const formData = new FormData();
   const audioFile = new File([audioBuffer], `speech.${extension}`, {
@@ -288,6 +305,12 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
   if (language) {
     formData.append("language", language);
   }
+
+  if (prompt) {
+    formData.append("prompt", prompt);
+  }
+
+  formData.append("temperature", "0");
 
   const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -307,7 +330,8 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
   }
 
   return {
-    text: payload.text || "",
+    text: normalizeTranscriptForImagePrompt(payload.text),
+    rawText: payload.text || "",
     source: "openai",
     model
   };
@@ -339,6 +363,7 @@ async function handleTranscribe(request, response) {
   sendJson(response, 200, {
     ok: true,
     text: result.text,
+    rawText: result.rawText,
     source: result.source,
     model: result.model,
     bytes: audioBuffer.byteLength,
