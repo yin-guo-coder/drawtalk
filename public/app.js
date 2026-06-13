@@ -54,6 +54,9 @@ let speechRecognition;
 let usingBrowserSpeech = false;
 let browserSpeechFinalText = "";
 let browserSpeechError = "";
+let passiveSpeechRecognition;
+let passiveSpeechFinalText = "";
+let passiveSpeechInterimText = "";
 let versions = [];
 let isGenerating = false;
 let pendingCommand = null;
@@ -263,6 +266,83 @@ function createSpeechRecognition() {
   });
 
   return recognition;
+}
+
+function getPassiveSpeechTranscript() {
+  return `${passiveSpeechFinalText}${passiveSpeechInterimText}`.trim();
+}
+
+function startPassiveSpeechFallback() {
+  if (!SpeechRecognition || passiveSpeechRecognition) {
+    return;
+  }
+
+  passiveSpeechFinalText = "";
+  passiveSpeechInterimText = "";
+  passiveSpeechRecognition = new SpeechRecognition();
+  passiveSpeechRecognition.lang = "zh-CN";
+  passiveSpeechRecognition.continuous = true;
+  passiveSpeechRecognition.interimResults = true;
+  passiveSpeechRecognition.maxAlternatives = 1;
+
+  passiveSpeechRecognition.addEventListener("result", (event) => {
+    let interimText = "";
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const text = event.results[index][0]?.transcript || "";
+
+      if (event.results[index].isFinal) {
+        passiveSpeechFinalText += text;
+      } else {
+        interimText += text;
+      }
+    }
+
+    passiveSpeechInterimText = interimText;
+    showTranscript(getPassiveSpeechTranscript());
+  });
+
+  passiveSpeechRecognition.addEventListener("error", () => {
+    passiveSpeechRecognition = undefined;
+  });
+
+  passiveSpeechRecognition.addEventListener("end", () => {
+    passiveSpeechRecognition = undefined;
+  });
+
+  try {
+    passiveSpeechRecognition.start();
+  } catch {
+    passiveSpeechRecognition = undefined;
+  }
+}
+
+function stopPassiveSpeechFallback() {
+  if (!passiveSpeechRecognition) {
+    return;
+  }
+
+  try {
+    passiveSpeechRecognition.stop();
+  } catch {
+    passiveSpeechRecognition.abort();
+  }
+}
+
+function waitForPassiveSpeechFallback(timeoutMs = 700) {
+  if (!passiveSpeechRecognition) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const fallback = passiveSpeechRecognition;
+    const timeout = window.setTimeout(resolve, timeoutMs);
+
+    fallback.addEventListener("end", () => {
+      window.clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
 }
 
 async function generateImageFromPrompt(prompt) {
@@ -479,6 +559,7 @@ async function startRecording() {
     }, { once: true });
 
     mediaRecorder.start();
+    startPassiveSpeechFallback();
     isRecording = true;
     micButton.classList.add("is-recording");
     setStatus("listening", "请开始说话，松开后使用 AI 语音模型转写");
@@ -503,6 +584,7 @@ function stopRecording() {
   isRecording = false;
   micButton.classList.remove("is-recording");
   setStatus("thinking", "正在使用 AI 语音模型转写");
+  stopPassiveSpeechFallback();
 
   if (mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
@@ -537,6 +619,15 @@ async function uploadRecording() {
     const transcript = payload.text || "";
     void handleRecognizedText(transcript);
   } catch (error) {
+    await waitForPassiveSpeechFallback();
+    const fallbackTranscript = getPassiveSpeechTranscript();
+
+    if (fallbackTranscript) {
+      setStatus("thinking", "AI 语音转写不可用，已使用浏览器识别结果");
+      void handleRecognizedText(fallbackTranscript);
+      return;
+    }
+
     setStatus("error", error.message || "AI 语音转写失败");
   }
 }
