@@ -29,6 +29,12 @@ body {
     var(--bg);
 }
 
+@media (min-width: 841px) and (min-height: 680px) {
+  body {
+    overflow: hidden;
+  }
+}
+
 button {
   font: inherit;
 }
