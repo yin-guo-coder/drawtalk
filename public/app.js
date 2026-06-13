@@ -446,7 +446,7 @@ async function ensureMediaStream() {
 }
 
 async function startRecording() {
-  if (SpeechRecognition) {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     startBrowserSpeechRecognition();
     return;
   }
@@ -481,7 +481,7 @@ async function startRecording() {
     mediaRecorder.start();
     isRecording = true;
     micButton.classList.add("is-recording");
-    setStatus("listening");
+    setStatus("listening", "请开始说话，松开后使用 AI 语音模型转写");
     showTranscript("");
   } catch (error) {
     setStatus("error", error.message || "麦克风不可用");
@@ -502,7 +502,7 @@ function stopRecording() {
 
   isRecording = false;
   micButton.classList.remove("is-recording");
-  setStatus("thinking");
+  setStatus("thinking", "正在使用 AI 语音模型转写");
 
   if (mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
@@ -520,6 +520,7 @@ async function uploadRecording() {
   }
 
   try {
+    setStatus("thinking", "正在上传语音并进行高准确度转写");
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
@@ -536,7 +537,7 @@ async function uploadRecording() {
     const transcript = payload.text || "";
     void handleRecognizedText(transcript);
   } catch (error) {
-    setStatus("error", error.message || "转写失败");
+    setStatus("error", error.message || "AI 语音转写失败");
   }
 }
 
