@@ -311,7 +311,153 @@ function normalizeTranscriptForImagePrompt(text) {
 }
 
 function getTranscriptionProvider() {
-  return String(process.env.TRANSCRIBE_PROVIDER || "mimo").trim().toLowerCase();
+  return String(process.env.TRANSCRIBE_PROVIDER || "osum").trim().toLowerCase();
+}
+
+function getOsumModel() {
+  return process.env.OSUM_MODEL || "OSUM";
+}
+
+function getOsumApiUrl() {
+  return String(process.env.OSUM_API_URL || "").trim();
+}
+
+function getOsumTaskPrompt() {
+  return process.env.OSUM_TASK_PROMPT || "请转写这段语音，同时识别说话人性别、年龄段和情感。请返回 JSON，字段为 text, gender, age, emotion。";
+}
+
+function normalizeSpeechAttribute(value) {
+  return String(value || "").trim();
+}
+
+function findFirstString(payload, keys) {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  for (const key of keys) {
+    const value = payload[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractTaggedValue(text, tags) {
+  const rawText = String(text || "");
+
+  for (const tag of tags) {
+    const closedPattern = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`, "iu");
+    const closedMatch = rawText.match(closedPattern);
+
+    if (closedMatch?.[1]) {
+      return closedMatch[1].trim();
+    }
+
+    const openPattern = new RegExp(`<${tag}>\\s*([^<\\n\\r]+)`, "iu");
+    const openMatch = rawText.match(openPattern);
+
+    if (openMatch?.[1]) {
+      return openMatch[1].trim();
+    }
+  }
+
+  return "";
+}
+
+function extractOsumTranscription(payload) {
+  const directText = extractMimoTranscription(payload)
+    || findFirstString(payload, ["asr", "transcript", "transcription_text", "speech_text"]);
+
+  if (directText) {
+    return directText;
+  }
+
+  const rawText = typeof payload === "string" ? payload : JSON.stringify(payload || {});
+  return extractTaggedValue(rawText, ["asr", "transcript", "text"]);
+}
+
+function extractOsumSpeaker(payload) {
+  const rawText = typeof payload === "string" ? payload : JSON.stringify(payload || {});
+
+  return {
+    gender: normalizeSpeechAttribute(
+      findFirstString(payload, ["gender", "speakerGender", "speaker_gender", "sgc"])
+      || extractTaggedValue(rawText, ["gender", "speaker_gender", "sgc"])
+    ),
+    age: normalizeSpeechAttribute(
+      findFirstString(payload, ["age", "ageGroup", "age_group", "speakerAge", "speaker_age", "sap"])
+      || extractTaggedValue(rawText, ["age", "age_group", "speaker_age", "sap"])
+    ),
+    emotion: normalizeSpeechAttribute(
+      findFirstString(payload, ["emotion", "speechEmotion", "speech_emotion", "ser"])
+      || extractTaggedValue(rawText, ["emotion", "speech_emotion", "ser"])
+    )
+  };
+}
+
+async function transcribeWithOsum(audioBuffer, contentType) {
+  if (process.env.MOCK_TRANSCRIPT) {
+    return {
+      text: normalizeTranscriptForImagePrompt(process.env.MOCK_TRANSCRIPT),
+      rawText: process.env.MOCK_TRANSCRIPT,
+      source: "mock",
+      model: getOsumModel(),
+      speaker: {
+        gender: process.env.MOCK_GENDER || "",
+        age: process.env.MOCK_AGE || "",
+        emotion: process.env.MOCK_EMOTION || ""
+      }
+    };
+  }
+
+  const endpoint = getOsumApiUrl();
+
+  if (!endpoint) {
+    const error = new Error("Missing OSUM_API_URL. Start an OSUM speech service and add OSUM_API_URL to .env.");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const fileName = getAudioFileName(contentType);
+  const formData = new FormData();
+  formData.append("file", new File([audioBuffer], fileName, {
+    type: contentType || "audio/webm"
+  }));
+  formData.append("model", getOsumModel());
+  formData.append("tasks", JSON.stringify(["asr", "sgc", "sap", "ser"]));
+  formData.append("prompt", getOsumTaskPrompt());
+
+  const apiResponse = await postFormData(endpoint, formData);
+
+  if (!apiResponse.ok) {
+    const message = apiResponse.payload.error?.message
+      || apiResponse.payload.error
+      || apiResponse.payload.message
+      || "OSUM speech model request failed";
+    const error = new Error(message);
+    error.statusCode = apiResponse.status === 404 ? 503 : 502;
+    throw error;
+  }
+
+  const text = extractOsumTranscription(apiResponse.payload);
+
+  if (!text) {
+    const error = new Error("OSUM speech model did not return transcription text");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    text: normalizeTranscriptForImagePrompt(text),
+    rawText: text,
+    source: "osum",
+    model: getOsumModel(),
+    speaker: extractOsumSpeaker(apiResponse.payload)
+  };
 }
 
 function getMimoAsrModel() {
@@ -601,6 +747,10 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
 async function transcribeAudio(audioBuffer, contentType) {
   const provider = getTranscriptionProvider();
 
+  if (provider === "osum" || provider === "osum-pangu") {
+    return transcribeWithOsum(audioBuffer, contentType);
+  }
+
   if (provider === "mimo" || provider === "mimo-v2.5-asr" || provider === "xiaomi") {
     return transcribeWithMimo(audioBuffer, contentType);
   }
@@ -643,6 +793,10 @@ async function handleTranscribe(request, response) {
     rawText: result.rawText,
     source: result.source,
     model: result.model,
+    speaker: result.speaker || {},
+    gender: result.speaker?.gender || "",
+    age: result.speaker?.age || "",
+    emotion: result.speaker?.emotion || "",
     bytes: audioBuffer.byteLength,
     elapsedMs: Date.now() - startedAt
   });
