@@ -477,34 +477,53 @@ async function handleCommand(request, response) {
   });
 }
 
+function hasExplicitAspectRatio(prompt, width, height) {
+  const pattern = new RegExp(`(?:^|[^0-9])${width}\\s*(?::|：|比)\\s*${height}(?:$|[^0-9])`, "u");
+  return pattern.test(prompt);
+}
+
 function parseAspectRatio(prompt) {
   const normalizedPrompt = String(prompt || "").toLowerCase();
+  const explicitRatios = [
+    { width: 16, height: 10, label: "16:10", size: "1536x1024" },
+    { width: 10, height: 16, label: "10:16", size: "1024x1536" },
+    { width: 16, height: 9, label: "16:9", size: "1536x1024" },
+    { width: 9, height: 16, label: "9:16", size: "1024x1536" },
+    { width: 3, height: 4, label: "3:4", size: "1024x1536" },
+    { width: 4, height: 3, label: "4:3", size: "1536x1024" },
+    { width: 1, height: 1, label: "1:1", size: "1024x1024" }
+  ];
+  const explicitRatio = explicitRatios.find((ratio) => hasExplicitAspectRatio(
+    normalizedPrompt,
+    ratio.width,
+    ratio.height
+  ));
 
-  if (/16\s*[:：比]\s*9|横版|横图|宽屏|电脑壁纸|banner/.test(normalizedPrompt)) {
+  if (explicitRatio) {
+    return {
+      label: explicitRatio.label,
+      size: explicitRatio.size
+    };
+  }
+
+  if (/横版|横图|宽屏|电脑壁纸|banner/.test(normalizedPrompt)) {
     return {
       label: "16:9",
       size: "1536x1024"
     };
   }
 
-  if (/9\s*[:：比]\s*16|竖版|竖图|手机壁纸|故事|海报/.test(normalizedPrompt)) {
+  if (/竖版|竖图|手机壁纸|故事|海报/.test(normalizedPrompt)) {
     return {
       label: "9:16",
       size: "1024x1536"
     };
   }
 
-  if (/3\s*[:：比]\s*4|小红书|封面/.test(normalizedPrompt)) {
+  if (/小红书|封面/.test(normalizedPrompt)) {
     return {
       label: "3:4",
       size: "1024x1536"
-    };
-  }
-
-  if (/4\s*[:：比]\s*3/.test(normalizedPrompt)) {
-    return {
-      label: "4:3",
-      size: "1536x1024"
     };
   }
 
@@ -627,7 +646,9 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
 function getHordeDimensions(aspectRatio) {
   const dimensions = {
     "16:9": { width: 576, height: 320 },
+    "16:10": { width: 512, height: 320 },
     "9:16": { width: 320, height: 576 },
+    "10:16": { width: 320, height: 512 },
     "3:4": { width: 384, height: 512 },
     "4:3": { width: 512, height: 384 },
     "1:1": { width: 384, height: 384 }
