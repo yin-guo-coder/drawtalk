@@ -520,8 +520,13 @@ function getHordeHeaders() {
   };
 }
 
+function getHordeModel() {
+  return process.env.HORDE_IMAGE_MODEL || "AbsoluteReality";
+}
+
 async function generateImageWithHorde({ prompt, aspectRatio }) {
   const dimensions = getHordeDimensions(aspectRatio);
+  const model = getHordeModel();
   const requestBody = {
     prompt,
     params: {
@@ -534,12 +539,9 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
     nsfw: false,
     trusted_workers: false,
     censor_nsfw: true,
-    r2: false
+    r2: false,
+    models: [model]
   };
-
-  if (process.env.HORDE_IMAGE_MODEL) {
-    requestBody.models = [process.env.HORDE_IMAGE_MODEL];
-  }
 
   const createResponse = await postJson(
     "https://aihorde.net/api/v2/generate/async",
@@ -602,7 +604,7 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
 
       return {
         imageBase64,
-        model: generation.model || process.env.HORDE_IMAGE_MODEL || "AI Horde",
+        model: generation.model || model,
         dimensions,
         generationId
       };
