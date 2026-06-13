@@ -346,6 +346,137 @@ async function handleTranscribe(request, response) {
   });
 }
 
+function includesAny(text, keywords) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function inferStyle(text) {
+  const styles = [
+    { keywords: ["赛博朋克", "霓虹", "cyberpunk"], value: "赛博朋克风格" },
+    { keywords: ["小红书", "干净", "清爽"], value: "干净清爽" },
+    { keywords: ["写实", "真实", "摄影"], value: "写实摄影" },
+    { keywords: ["动漫", "二次元", "漫画"], value: "动漫插画" },
+    { keywords: ["水彩"], value: "水彩插画" },
+    { keywords: ["油画"], value: "油画质感" },
+    { keywords: ["像素"], value: "像素艺术" },
+    { keywords: ["极简", "简约"], value: "极简风格" },
+    { keywords: ["国风", "中国风"], value: "国风插画" }
+  ];
+
+  return styles.find((style) => includesAny(text, style.keywords))?.value || "高质量视觉风格";
+}
+
+function inferSubject(text) {
+  const cleaned = text
+    .replace(/^(帮我|请|麻烦|给我|我想|想要)?(生成|画|做|设计|来一张|出一张|制作)?/u, "")
+    .replace(/(图片|图|画面|封面|海报)$/u, "")
+    .trim();
+
+  return cleaned || text.trim();
+}
+
+function inferMustAvoid(text) {
+  const avoid = [];
+
+  if (includesAny(text, ["不要文字", "无文字", "不要复杂文字", "不要字"])) {
+    avoid.push("复杂文字");
+  }
+
+  if (includesAny(text, ["不要水印", "无水印"])) {
+    avoid.push("水印");
+  }
+
+  if (includesAny(text, ["不要变形", "别变形"])) {
+    avoid.push("明显变形");
+  }
+
+  return avoid;
+}
+
+function buildCommandPrompt(command) {
+  return [
+    command.subject,
+    command.style,
+    command.aspectRatio ? `${command.aspectRatio} 画幅` : "",
+    command.mustAvoid?.length ? `避免：${command.mustAvoid.join("、")}` : ""
+  ].filter(Boolean).join("，");
+}
+
+function buildGenerateCommand(text, previousCommand) {
+  const aspectRatio = parseAspectRatio(text);
+  const command = {
+    intent: "generate",
+    subject: inferSubject(text),
+    style: inferStyle(text),
+    aspectRatio: aspectRatio.label,
+    mustKeep: previousCommand?.mustKeep || [],
+    mustAvoid: inferMustAvoid(text),
+    needConfirmation: true
+  };
+
+  command.prompt = buildCommandPrompt(command);
+  command.replyToUser = `我理解为：生成一张${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。${command.mustAvoid.length ? `避免${command.mustAvoid.join("、")}。` : ""}是否确认？`;
+  return command;
+}
+
+function buildRevisedCommand(text, previousCommand) {
+  const revision = text.replace(/^(改成|换成|调整为|改为|变成|不对，?|不是，?)/u, "").trim();
+  const baseText = [previousCommand?.subject, revision].filter(Boolean).join("，");
+  const command = buildGenerateCommand(baseText || text, previousCommand);
+
+  command.intent = "generate";
+  command.userRevision = text;
+  command.replyToUser = `我已改成：${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。是否确认？`;
+  return command;
+}
+
+function parseCommand(text, previousCommand) {
+  const normalizedText = String(text || "").trim();
+
+  if (!normalizedText) {
+    const error = new Error("Command text is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (includesAny(normalizedText, ["确认", "可以", "没问题", "对", "开始生成", "就这样"]) && !includesAny(normalizedText, ["不对", "不是", "不要"])) {
+    return {
+      intent: "confirm",
+      needConfirmation: false,
+      replyToUser: previousCommand ? "已确认，开始生成图片。" : "还没有待确认的需求，请先说出想生成的画面。"
+    };
+  }
+
+  if (includesAny(normalizedText, ["不对", "不是", "取消", "重新说", "先别生成"])) {
+    return {
+      intent: "reject",
+      needConfirmation: false,
+      replyToUser: "好的，已取消。请重新说出你想生成的画面。"
+    };
+  }
+
+  if (previousCommand && includesAny(normalizedText, ["改成", "换成", "调整为", "改为", "变成"])) {
+    return buildRevisedCommand(normalizedText, previousCommand);
+  }
+
+  return buildGenerateCommand(normalizedText, previousCommand);
+}
+
+async function handleCommand(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const payload = await readJsonBody(request);
+  const command = parseCommand(payload.text, payload.previousCommand);
+
+  sendJson(response, 200, {
+    ok: true,
+    command
+  });
+}
+
 function parseAspectRatio(prompt) {
   const normalizedPrompt = String(prompt || "").toLowerCase();
 
@@ -798,6 +929,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/transcribe")) {
       await handleTranscribe(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/command")) {
+      await handleCommand(request, response);
       return;
     }
 
