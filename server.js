@@ -521,7 +521,8 @@ async function handleCommand(request, response) {
   }
 
   const payload = await readJsonBody(request);
-  const command = parseCommand(payload.text, payload.previousCommand);
+  const commandText = normalizeTranscriptForImagePrompt(payload.text);
+  const command = parseCommand(commandText, payload.previousCommand);
 
   sendJson(response, 200, {
     ok: true,
