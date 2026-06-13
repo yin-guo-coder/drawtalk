@@ -1,0 +1,14 @@
+{
+  "name": "drawtalk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A voice-first AI text-to-image web MVP.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
