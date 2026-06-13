@@ -118,7 +118,7 @@ function showTranscript(text) {
 }
 
 function clearSpeechInsights() {
-  speechInsights.hidden = true;
+  speechInsights.hidden = false;
   speechGender.textContent = "--";
   speechAge.textContent = "--";
   speechEmotion.textContent = "--";
@@ -129,9 +129,7 @@ function showSpeechInsights(payload) {
   const gender = payload.gender || speaker.gender || "";
   const age = payload.age || speaker.age || "";
   const emotion = payload.emotion || speaker.emotion || "";
-  const hasInsight = Boolean(gender || age || emotion);
-
-  speechInsights.hidden = !hasInsight;
+  speechInsights.hidden = false;
   speechGender.textContent = gender || "--";
   speechAge.textContent = age || "--";
   speechEmotion.textContent = emotion || "--";

@@ -322,10 +322,8 @@ h2 {
 }
 
 .speech-insights {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
-  margin-top: 12px;
 }
 
 .speech-insights[hidden] {
@@ -333,9 +331,10 @@ h2 {
 }
 
 .speech-insights span {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 32px;
   padding: 6px 10px;
   border: 1px solid rgba(23, 108, 114, 0.18);
@@ -386,7 +385,7 @@ h2 {
 
 .versions-panel {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -403,6 +402,18 @@ h2 {
   padding: 18px;
   list-style: none;
   overflow: auto;
+}
+
+.speaker-analysis-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px 18px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.speaker-analysis-panel h2 {
+  font-size: 1rem;
 }
 
 .version-empty {

@@ -43,11 +43,6 @@
           <div class="voice-copy">
             <p class="voice-title" id="voice-title">按住说话</p>
             <p class="voice-status" id="voice-status">说出你想画的画面</p>
-            <div class="speech-insights" id="speech-insights" hidden>
-              <span>性别 <strong id="speech-gender">--</strong></span>
-              <span>年龄 <strong id="speech-age">--</strong></span>
-              <span>情感 <strong id="speech-emotion">--</strong></span>
-            </div>
             <label class="provider-control" for="provider-select">
               <span>生图模型</span>
               <select id="provider-select" name="provider">
@@ -67,6 +62,17 @@
         <ol class="version-list" id="version-list">
           <li class="version-empty">暂无版本</li>
         </ol>
+        <section class="speaker-analysis-panel" aria-labelledby="speaker-analysis-title">
+          <div class="speaker-analysis-header">
+            <p class="eyebrow">Voice</p>
+            <h2 id="speaker-analysis-title">说话人分析</h2>
+          </div>
+          <div class="speech-insights" id="speech-insights">
+            <span>性别 <strong id="speech-gender">--</strong></span>
+            <span>年龄 <strong id="speech-age">--</strong></span>
+            <span>情感 <strong id="speech-emotion">--</strong></span>
+          </div>
+        </section>
       </aside>
     </main>
 
