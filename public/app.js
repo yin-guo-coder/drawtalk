@@ -562,7 +562,7 @@ async function startRecording() {
     startPassiveSpeechFallback();
     isRecording = true;
     micButton.classList.add("is-recording");
-    setStatus("listening", "请开始说话，松开后使用 AI 语音模型转写");
+    setStatus("listening", "请开始说话，松开后使用 MiMo 语音模型转写");
     showTranscript("");
   } catch (error) {
     setStatus("error", error.message || "麦克风不可用");
@@ -583,7 +583,7 @@ function stopRecording() {
 
   isRecording = false;
   micButton.classList.remove("is-recording");
-  setStatus("thinking", "正在使用 AI 语音模型转写");
+  setStatus("thinking", "正在使用 MiMo 语音模型转写");
   stopPassiveSpeechFallback();
 
   if (mediaRecorder.state !== "inactive") {
@@ -602,7 +602,7 @@ async function uploadRecording() {
   }
 
   try {
-    setStatus("thinking", "正在上传语音并进行高准确度转写");
+    setStatus("thinking", "正在上传语音并使用 MiMo 转写");
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
@@ -623,12 +623,12 @@ async function uploadRecording() {
     const fallbackTranscript = getPassiveSpeechTranscript();
 
     if (fallbackTranscript) {
-      setStatus("thinking", "AI 语音转写不可用，已使用浏览器识别结果");
+      setStatus("thinking", "MiMo 语音转写不可用，已使用浏览器识别结果");
       void handleRecognizedText(fallbackTranscript);
       return;
     }
 
-    setStatus("error", error.message || "AI 语音转写失败");
+    setStatus("error", error.message || "MiMo 语音转写失败");
   }
 }
 
