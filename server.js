@@ -311,7 +311,34 @@ function normalizeTranscriptForImagePrompt(text) {
 }
 
 function getTranscriptionProvider() {
-  return String(process.env.TRANSCRIBE_PROVIDER || "osum").trim().toLowerCase();
+  return String(process.env.ASR_PROVIDER || process.env.TRANSCRIBE_PROVIDER || "mimo").trim().toLowerCase();
+}
+
+function getSpeakerAnalysisProvider() {
+  return String(process.env.SPEAKER_ANALYSIS_PROVIDER || "audeering").trim().toLowerCase();
+}
+
+function getAudeeringBaseUrl() {
+  return (process.env.AUDEERING_API_URL || "https://audeering-speech-analysis.hf.space").replace(/\/+$/u, "");
+}
+
+function getAudeeringTimeoutMs() {
+  return Number(process.env.AUDEERING_TIMEOUT_MS || 180000);
+}
+
+function getAudeeringDirectApiUrl() {
+  const endpoint = String(process.env.AUDEERING_API_URL || "").trim();
+
+  if (!endpoint) {
+    return "";
+  }
+
+  try {
+    const url = new URL(endpoint);
+    return url.pathname && url.pathname !== "/" ? endpoint : "";
+  } catch {
+    return endpoint;
+  }
 }
 
 function getOsumModel() {
@@ -397,6 +424,191 @@ function extractOsumSpeaker(payload) {
       || extractTaggedValue(rawText, ["emotion", "speech_emotion", "ser"])
     )
   };
+}
+
+function extractLabelLikeValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value.label === "string") {
+    return value.label.trim();
+  }
+
+  if (Array.isArray(value.confidences)) {
+    const bestConfidence = value.confidences
+      .filter((item) => typeof item?.label === "string")
+      .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0))[0];
+
+    return bestConfidence?.label?.trim() || "";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(extractLabelLikeValue).find(Boolean) || "";
+  }
+
+  if (typeof value === "object") {
+    const numericEntry = Object.entries(value)
+      .filter(([, entryValue]) => typeof entryValue === "number")
+      .sort((left, right) => right[1] - left[1])[0];
+
+    if (numericEntry) {
+      return numericEntry[0];
+    }
+  }
+
+  return "";
+}
+
+function extractDimensionEmotion(payload) {
+  const arousal = findFirstString(payload, ["arousal", "activation"]);
+  const dominance = findFirstString(payload, ["dominance"]);
+  const valence = findFirstString(payload, ["valence"]);
+  const dimensions = [
+    arousal ? `arousal:${arousal}` : "",
+    dominance ? `dominance:${dominance}` : "",
+    valence ? `valence:${valence}` : ""
+  ].filter(Boolean);
+
+  return dimensions.join(" / ");
+}
+
+function extractAudeeringSpeaker(payload) {
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+  const directEmotion = findFirstString(payload, ["emotion", "speechEmotion", "speech_emotion"]);
+  const dimensionEmotion = extractDimensionEmotion(payload);
+  const expressionOutput = data[2];
+
+  return {
+    age: normalizeSpeechAttribute(
+      findFirstString(payload, ["age", "ageGroup", "age_group"])
+      || extractLabelLikeValue(data[0])
+    ),
+    gender: normalizeSpeechAttribute(
+      findFirstString(payload, ["gender", "speakerGender", "speaker_gender"])
+      || extractLabelLikeValue(data[1])
+    ),
+    emotion: normalizeSpeechAttribute(
+      directEmotion
+      || dimensionEmotion
+      || extractLabelLikeValue(expressionOutput)
+      || (expressionOutput ? "expression dimensions" : "")
+    )
+  };
+}
+
+async function callAudeeringDirectEndpoint(audioBuffer, contentType) {
+  const endpoint = getAudeeringDirectApiUrl();
+
+  if (!endpoint) {
+    return undefined;
+  }
+
+  const fileName = getAudioFileName(contentType);
+  const formData = new FormData();
+  formData.append("file", new File([audioBuffer], fileName, {
+    type: contentType || "audio/webm"
+  }));
+
+  const apiResponse = await postFormData(endpoint, formData);
+
+  if (!apiResponse.ok) {
+    const message = apiResponse.payload.error?.message
+      || apiResponse.payload.error
+      || apiResponse.payload.message
+      || "audEERING speaker analysis endpoint failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return extractAudeeringSpeaker(apiResponse.payload);
+}
+
+async function callAudeeringGradioSpace(audioBuffer, contentType) {
+  const baseUrl = getAudeeringBaseUrl();
+  const fileName = getAudioFileName(contentType);
+  const formData = new FormData();
+  formData.append("files", new File([audioBuffer], fileName, {
+    type: contentType || "audio/webm"
+  }));
+
+  const uploadResponse = await postFormData(`${baseUrl}/gradio_api/upload`, formData);
+
+  if (!uploadResponse.ok) {
+    const message = uploadResponse.payload.error?.message
+      || uploadResponse.payload.error
+      || uploadResponse.payload.message
+      || "audEERING speaker analysis audio upload failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const audioFile = getGradioUploadedFile(uploadResponse.payload, fileName, contentType, audioBuffer);
+  const data = [audioFile];
+  const endpoints = [
+    process.env.AUDEERING_GRADIO_API || "predict",
+    "recognize"
+  ].filter(Boolean);
+  let lastError;
+
+  for (const endpoint of endpoints) {
+    try {
+      const createResponse = await postJson(`${baseUrl}/gradio_api/call/${endpoint}`, { data });
+
+      if (!createResponse.ok) {
+        throw new Error(createResponse.payload.error?.message || createResponse.payload.error || createResponse.payload.message || `audEERING analysis call failed: ${endpoint}`);
+      }
+
+      const eventId = createResponse.payload.event_id || createResponse.payload.hash;
+
+      if (eventId) {
+        const resultResponse = await requestRaw(`${baseUrl}/gradio_api/call/${endpoint}/${eventId}`, {
+          timeoutMs: getAudeeringTimeoutMs()
+        });
+
+        if (!resultResponse.ok) {
+          throw new Error(resultResponse.payload.error?.message || resultResponse.payload.error || resultResponse.payload.message || `audEERING analysis result failed: ${endpoint}`);
+        }
+
+        return extractAudeeringSpeaker({
+          data: extractGradioEventPayload(resultResponse.text)
+        });
+      }
+
+      return extractAudeeringSpeaker(createResponse.payload);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const legacyResponse = await postJson(`${baseUrl}/api/predict`, {
+    data,
+    fn_index: 0
+  });
+
+  if (!legacyResponse.ok) {
+    const message = legacyResponse.payload.error?.message
+      || legacyResponse.payload.error
+      || legacyResponse.payload.message
+      || lastError?.message
+      || "audEERING speaker analysis failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return extractAudeeringSpeaker(legacyResponse.payload);
+}
+
+async function analyzeWithAudeering(audioBuffer, contentType) {
+  return await callAudeeringDirectEndpoint(audioBuffer, contentType)
+    || await callAudeeringGradioSpace(audioBuffer, contentType);
 }
 
 async function transcribeWithOsum(audioBuffer, contentType) {
@@ -764,6 +976,22 @@ async function transcribeAudio(audioBuffer, contentType) {
   throw error;
 }
 
+async function analyzeSpeaker(audioBuffer, contentType) {
+  const provider = getSpeakerAnalysisProvider();
+
+  if (!provider || provider === "none" || provider === "off") {
+    return {};
+  }
+
+  if (provider === "audeering") {
+    return analyzeWithAudeering(audioBuffer, contentType);
+  }
+
+  const error = new Error(`Unsupported speaker analysis provider: ${provider}`);
+  error.statusCode = 400;
+  throw error;
+}
+
 async function handleTranscribe(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { error: "Method not allowed" });
@@ -785,7 +1013,23 @@ async function handleTranscribe(request, response) {
   }
 
   const startedAt = Date.now();
-  const result = await transcribeAudio(audioBuffer, contentType);
+  const [transcribeResult, speakerResult] = await Promise.allSettled([
+    transcribeAudio(audioBuffer, contentType),
+    analyzeSpeaker(audioBuffer, contentType)
+  ]);
+
+  if (transcribeResult.status === "rejected") {
+    throw transcribeResult.reason;
+  }
+
+  const result = transcribeResult.value;
+  const speaker = {
+    ...(result.speaker || {}),
+    ...(speakerResult.status === "fulfilled" ? speakerResult.value : {})
+  };
+  const speakerAnalysisError = speakerResult.status === "rejected"
+    ? speakerResult.reason?.message || "Speaker analysis failed"
+    : "";
 
   sendJson(response, 200, {
     ok: true,
@@ -793,10 +1037,12 @@ async function handleTranscribe(request, response) {
     rawText: result.rawText,
     source: result.source,
     model: result.model,
-    speaker: result.speaker || {},
-    gender: result.speaker?.gender || "",
-    age: result.speaker?.age || "",
-    emotion: result.speaker?.emotion || "",
+    speaker,
+    gender: speaker.gender || "",
+    age: speaker.age || "",
+    emotion: speaker.emotion || "",
+    speakerAnalysisSource: getSpeakerAnalysisProvider(),
+    speakerAnalysisError,
     bytes: audioBuffer.byteLength,
     elapsedMs: Date.now() - startedAt
   });
