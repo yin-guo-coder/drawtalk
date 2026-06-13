@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { connect as netConnect } from "node:net";
 import { extname, relative, resolve } from "node:path";
+import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -32,6 +35,10 @@ const audioExtensions = {
 
 await loadEnvFile();
 
+function getOpenAIProxyUrl() {
+  return process.env.OPENAI_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "";
+}
+
 async function loadEnvFile() {
   try {
     const envFile = await readFile(resolve(__dirname, ".env"), "utf8");
@@ -49,7 +56,7 @@ async function loadEnvFile() {
         continue;
       }
 
-      const key = trimmed.slice(0, equalsIndex).trim();
+      const key = trimmed.slice(0, equalsIndex).trim().replace(/^\uFEFF/, "");
       const value = trimmed.slice(equalsIndex + 1).trim().replace(/^['"]|['"]$/g, "");
 
       if (key && process.env[key] === undefined) {
@@ -69,6 +76,115 @@ function sendJson(response, status, payload) {
     "Cache-Control": "no-store"
   });
   response.end(JSON.stringify(payload));
+}
+
+function createHttpsProxyAgent(proxyUrl) {
+  const proxy = new URL(proxyUrl);
+
+  return new HttpsAgent({
+    createConnection(options, callback) {
+      const proxySocket = netConnect(
+        Number(proxy.port || 80),
+        proxy.hostname,
+        () => {
+          const targetHost = `${options.host}:${options.port || 443}`;
+          const headers = [
+            `CONNECT ${targetHost} HTTP/1.1`,
+            `Host: ${targetHost}`,
+            "Proxy-Connection: Keep-Alive"
+          ];
+
+          if (proxy.username || proxy.password) {
+            const credentials = Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64");
+            headers.push(`Proxy-Authorization: Basic ${credentials}`);
+          }
+
+          proxySocket.write(`${headers.join("\r\n")}\r\n\r\n`);
+        }
+      );
+      let buffered = Buffer.alloc(0);
+
+      proxySocket.on("data", function onProxyData(chunk) {
+        buffered = Buffer.concat([buffered, chunk]);
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+
+        if (headerEnd === -1) {
+          return;
+        }
+
+        proxySocket.off("data", onProxyData);
+
+        const header = buffered.slice(0, headerEnd).toString("utf8");
+        const remaining = buffered.slice(headerEnd + 4);
+
+        if (!/^HTTP\/1\.[01] 200/i.test(header)) {
+          callback(new Error(`Proxy CONNECT failed: ${header.split("\r\n")[0]}`));
+          proxySocket.destroy();
+          return;
+        }
+
+        if (remaining.length > 0) {
+          proxySocket.unshift(remaining);
+        }
+
+        const tlsSocket = tlsConnect({
+          socket: proxySocket,
+          servername: options.servername || options.host
+        });
+        callback(null, tlsSocket);
+      });
+
+      proxySocket.on("error", callback);
+    }
+  });
+}
+
+async function postJson(url, body, headers = {}) {
+  const proxyUrl = getOpenAIProxyUrl();
+  const requestUrl = new URL(url);
+  const bodyText = JSON.stringify(body);
+
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = httpsRequest(requestUrl, {
+      method: "POST",
+      agent: proxyUrl ? createHttpsProxyAgent(proxyUrl) : undefined,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(bodyText),
+        ...headers
+      },
+      timeout: 120000
+    }, (apiResponse) => {
+      const chunks = [];
+
+      apiResponse.on("data", (chunk) => {
+        chunks.push(chunk);
+      });
+
+      apiResponse.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        let payload = {};
+
+        try {
+          payload = text ? JSON.parse(text) : {};
+        } catch {
+          payload = { raw: text };
+        }
+
+        resolveRequest({
+          ok: apiResponse.statusCode >= 200 && apiResponse.statusCode < 300,
+          status: apiResponse.statusCode,
+          payload
+        });
+      });
+    });
+
+    request.on("timeout", () => {
+      request.destroy(new Error("OpenAI request timed out"));
+    });
+    request.on("error", rejectRequest);
+    request.end(bodyText);
+  });
 }
 
 async function readRequestBody(request) {
@@ -338,21 +454,16 @@ async function generateImageWithOpenAI({ prompt, size }) {
   }
 
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-  const response = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      prompt,
-      n: 1,
-      size
-    })
+  const response = await postJson("https://api.openai.com/v1/images/generations", {
+    model,
+    prompt,
+    n: 1,
+    size
+  }, {
+    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = response.payload;
 
   if (!response.ok) {
     const message = payload.error?.message || "OpenAI image generation failed";
