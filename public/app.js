@@ -2,6 +2,8 @@ const micButton = document.querySelector("#mic-button");
 const statusChip = document.querySelector("#status-chip");
 const voiceTitle = document.querySelector("#voice-title");
 const voiceStatus = document.querySelector("#voice-status");
+const imageFrame = document.querySelector("#image-frame");
+const emptyImage = document.querySelector(".empty-image");
 const transcriptPreview = document.querySelector("#transcript-preview");
 const versionList = document.querySelector("#version-list");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -49,6 +51,8 @@ let speechRecognition;
 let usingBrowserSpeech = false;
 let browserSpeechFinalText = "";
 let browserSpeechError = "";
+let versions = [];
+let isGenerating = false;
 
 function setStatus(state, message) {
   const nextStatus = statuses[state] || statuses.idle;
@@ -62,6 +66,21 @@ function showTranscript(text) {
   const trimmed = text.trim();
   transcriptPreview.hidden = !trimmed;
   transcriptPreview.textContent = trimmed ? `“${trimmed}”` : "";
+}
+
+function showGeneratedImage(version) {
+  let image = imageFrame.querySelector(".generated-image");
+
+  if (!image) {
+    image = document.createElement("img");
+    image.className = "generated-image";
+    imageFrame.prepend(image);
+  }
+
+  image.src = `${version.imagePath}?t=${Date.now()}`;
+  image.alt = version.systemUnderstanding || version.userSpeechText || "生成图片";
+  emptyImage.hidden = true;
+  imageFrame.classList.add("has-generated-image");
 }
 
 function renderVersions(versions = []) {
@@ -83,9 +102,16 @@ function renderVersions(versions = []) {
     title.textContent = `版本 ${version.id}`;
 
     const detail = document.createElement("span");
-    detail.textContent = version.prompt || "等待生成";
+    detail.textContent = version.userSpeechText || version.prompt || "等待生成";
 
-    item.append(title, detail);
+    const meta = document.createElement("span");
+    meta.textContent = [
+      version.params?.aspectRatio,
+      version.params?.size,
+      version.source === "openai" ? "AI 生成" : "本地预览"
+    ].filter(Boolean).join(" · ");
+
+    item.append(title, detail, meta);
     versionList.append(item);
   }
 }
@@ -154,6 +180,7 @@ function createSpeechRecognition() {
     if (transcript) {
       showTranscript(transcript);
       setStatus("ready", "浏览器已识别语音");
+      void generateImageFromPrompt(transcript);
       return;
     }
 
@@ -161,6 +188,49 @@ function createSpeechRecognition() {
   });
 
   return recognition;
+}
+
+async function generateImageFromPrompt(prompt) {
+  const trimmedPrompt = prompt.trim();
+
+  if (!trimmedPrompt || isGenerating) {
+    return;
+  }
+
+  isGenerating = true;
+  micButton.disabled = true;
+  setStatus("generating", "正在根据语音生成图片");
+
+  try {
+    const response = await fetch("/api/generate-image", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt: trimmedPrompt })
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.error || "图片生成失败");
+    }
+
+    const version = payload.version;
+    versions = [version, ...versions];
+    showGeneratedImage(version);
+    renderVersions(versions);
+    setStatus(
+      "ready",
+      version.source === "openai"
+        ? "图片已生成"
+        : "已生成本地预览，配置 Key 后可生成真实 AI 图片"
+    );
+  } catch (error) {
+    setStatus("error", error.message || "图片生成失败");
+  } finally {
+    isGenerating = false;
+    micButton.disabled = false;
+  }
 }
 
 function startBrowserSpeechRecognition() {
@@ -329,6 +399,10 @@ async function uploadRecording() {
     const transcript = payload.text || "";
     showTranscript(transcript);
     setStatus("ready", transcript ? "语音已转成文字" : "没有识别到文字");
+
+    if (transcript) {
+      void generateImageFromPrompt(transcript);
+    }
   } catch (error) {
     setStatus("error", error.message || "转写失败");
   }

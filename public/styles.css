@@ -168,6 +168,15 @@ h2 {
   overflow: hidden;
 }
 
+.generated-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #101823;
+}
+
 .empty-sky {
   position: absolute;
   inset: 0;
@@ -231,6 +240,11 @@ h2 {
 
 .mic-button:hover {
   background: #d94435;
+}
+
+.mic-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .mic-button:active,
