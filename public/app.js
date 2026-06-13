@@ -4,6 +4,8 @@ const voiceTitle = document.querySelector("#voice-title");
 const voiceStatus = document.querySelector("#voice-status");
 const imageFrame = document.querySelector("#image-frame");
 const emptyImage = document.querySelector(".empty-image");
+const understandingPanel = document.querySelector("#understanding-panel");
+const understandingText = document.querySelector("#understanding-text");
 const transcriptPreview = document.querySelector("#transcript-preview");
 const versionList = document.querySelector("#version-list");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -53,6 +55,7 @@ let browserSpeechFinalText = "";
 let browserSpeechError = "";
 let versions = [];
 let isGenerating = false;
+let pendingCommand = null;
 
 function getVersionSourceLabel(source) {
   if (source === "openai") {
@@ -90,6 +93,43 @@ function showTranscript(text) {
   const trimmed = text.trim();
   transcriptPreview.hidden = !trimmed;
   transcriptPreview.textContent = trimmed ? `“${trimmed}”` : "";
+  understandingPanel.hidden = true;
+  understandingText.textContent = "";
+}
+
+function showDialogue(userText, assistantText) {
+  const lines = [];
+
+  if (userText) {
+    lines.push(`你：${userText}`);
+  }
+
+  if (assistantText) {
+    lines.push(`AI：${assistantText}`);
+  }
+
+  const content = lines.join("\n");
+  transcriptPreview.hidden = !content;
+  transcriptPreview.textContent = content;
+  understandingPanel.hidden = !assistantText;
+  understandingText.textContent = assistantText || "";
+
+  if (assistantText) {
+    speakAssistantReply(assistantText);
+  }
+}
+
+function speakAssistantReply(text) {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "zh-CN";
+  utterance.rate = 1;
+  window.speechSynthesis.speak(utterance);
 }
 
 function showGeneratedImage(version) {
@@ -202,9 +242,7 @@ function createSpeechRecognition() {
     const transcript = browserSpeechFinalText.trim();
 
     if (transcript) {
-      showTranscript(transcript);
-      setStatus("ready", "浏览器已识别语音");
-      void generateImageFromPrompt(transcript);
+      void handleRecognizedText(transcript);
       return;
     }
 
@@ -249,6 +287,67 @@ async function generateImageFromPrompt(prompt) {
   } finally {
     isGenerating = false;
     micButton.disabled = false;
+  }
+}
+
+async function parseVoiceCommand(text) {
+  const response = await fetch("/api/command", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      text,
+      previousCommand: pendingCommand
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || "需求理解失败");
+  }
+
+  return payload.command;
+}
+
+async function handleRecognizedText(transcript) {
+  const trimmedTranscript = transcript.trim();
+
+  if (!trimmedTranscript) {
+    setStatus("error", "没有识别到文字");
+    return;
+  }
+
+  showDialogue(trimmedTranscript, "");
+  setStatus("thinking", "正在理解你的需求");
+
+  try {
+    const command = await parseVoiceCommand(trimmedTranscript);
+    showDialogue(trimmedTranscript, command.replyToUser);
+
+    if (command.intent === "confirm") {
+      if (!pendingCommand) {
+        setStatus("error", command.replyToUser);
+        return;
+      }
+
+      const commandToGenerate = pendingCommand;
+      pendingCommand = null;
+      setStatus("generating", "已确认，正在生成图片");
+      void generateImageFromPrompt(commandToGenerate.prompt || commandToGenerate.subject);
+      return;
+    }
+
+    if (command.intent === "reject") {
+      pendingCommand = null;
+      setStatus("ready", "请重新说出你想生成的画面");
+      return;
+    }
+
+    pendingCommand = command;
+    setStatus("ready", "请说“确认”开始生成，或说“不对 / 改成……”调整");
+  } catch (error) {
+    setStatus("error", error.message || "需求理解失败");
   }
 }
 
@@ -416,12 +515,7 @@ async function uploadRecording() {
     }
 
     const transcript = payload.text || "";
-    showTranscript(transcript);
-    setStatus("ready", transcript ? "语音已转成文字" : "没有识别到文字");
-
-    if (transcript) {
-      void generateImageFromPrompt(transcript);
-    }
+    void handleRecognizedText(transcript);
   } catch (error) {
     setStatus("error", error.message || "转写失败");
   }
