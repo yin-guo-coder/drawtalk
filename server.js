@@ -495,11 +495,11 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
 
 function getHordeDimensions(aspectRatio) {
   const dimensions = {
-    "16:9": { width: 1024, height: 576 },
-    "9:16": { width: 576, height: 1024 },
-    "3:4": { width: 768, height: 1024 },
-    "4:3": { width: 1024, height: 768 },
-    "1:1": { width: 768, height: 768 }
+    "16:9": { width: 576, height: 320 },
+    "9:16": { width: 320, height: 576 },
+    "3:4": { width: 448, height: 576 },
+    "4:3": { width: 576, height: 448 },
+    "1:1": { width: 512, height: 512 }
   };
 
   return dimensions[aspectRatio.label] || dimensions["1:1"];
