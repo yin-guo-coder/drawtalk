@@ -145,22 +145,20 @@ function createHttpsProxyAgent(proxyUrl) {
   return new HttpsProxyAgent(proxyUrl);
 }
 
-async function requestJson(url, { method = "GET", body, headers = {}, timeoutMs = 120000 } = {}) {
+async function requestRaw(url, { method = "GET", body, headers = {}, timeoutMs = 120000 } = {}) {
   const proxyUrl = getOutboundProxyUrl();
   const requestUrl = new URL(url);
-  const bodyText = body === undefined ? undefined : JSON.stringify(body);
+  const requestHeaders = { ...headers };
+
+  if (body !== undefined && !("Content-Length" in requestHeaders) && !("content-length" in requestHeaders)) {
+    requestHeaders["Content-Length"] = Buffer.isBuffer(body) ? body.byteLength : Buffer.byteLength(String(body));
+  }
 
   return new Promise((resolveRequest, rejectRequest) => {
     const request = httpsRequest(requestUrl, {
       method,
       agent: proxyUrl ? createHttpsProxyAgent(proxyUrl) : undefined,
-      headers: {
-        ...(bodyText ? {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(bodyText)
-        } : {}),
-        ...headers
-      },
+      headers: requestHeaders,
       timeout: timeoutMs
     }, (apiResponse) => {
       const chunks = [];
@@ -191,7 +189,23 @@ async function requestJson(url, { method = "GET", body, headers = {}, timeoutMs 
       request.destroy(new Error("OpenAI request timed out"));
     });
     request.on("error", rejectRequest);
-    request.end(bodyText);
+    request.end(body);
+  });
+}
+
+async function requestJson(url, { method = "GET", body, headers = {}, timeoutMs = 120000 } = {}) {
+  const bodyText = body === undefined ? undefined : JSON.stringify(body);
+
+  return requestRaw(url, {
+    method,
+    body: bodyText,
+    headers: {
+      ...(bodyText ? {
+        "Content-Type": "application/json"
+      } : {}),
+      ...headers
+    },
+    timeoutMs
   });
 }
 
@@ -200,6 +214,24 @@ async function postJson(url, body, headers = {}) {
     method: "POST",
     body,
     headers
+  });
+}
+
+async function postFormData(url, formData, headers = {}) {
+  const serializedRequest = new Request(url, {
+    method: "POST",
+    headers,
+    body: formData
+  });
+  const bodyBuffer = Buffer.from(await serializedRequest.arrayBuffer());
+
+  return requestRaw(url, {
+    method: "POST",
+    body: bodyBuffer,
+    headers: {
+      ...headers,
+      "Content-Type": serializedRequest.headers.get("content-type")
+    }
   });
 }
 
@@ -312,17 +344,12 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
 
   formData.append("temperature", "0");
 
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-    },
-    body: formData
+  const apiResponse = await postFormData("https://api.openai.com/v1/audio/transcriptions", formData, {
+    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
   });
+  const payload = apiResponse.payload;
 
-  const payload = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
+  if (!apiResponse.ok) {
     const message = payload.error?.message || "OpenAI transcription failed";
     const error = new Error(message);
     error.statusCode = 502;
