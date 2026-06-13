@@ -7,6 +7,7 @@ const emptyImage = document.querySelector(".empty-image");
 const understandingPanel = document.querySelector("#understanding-panel");
 const understandingText = document.querySelector("#understanding-text");
 const transcriptPreview = document.querySelector("#transcript-preview");
+const providerSelect = document.querySelector("#provider-select");
 const versionList = document.querySelector("#version-list");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -59,7 +60,7 @@ let pendingCommand = null;
 
 function getVersionSourceLabel(source) {
   if (source === "openai") {
-    return "AI 生成";
+    return "GPT Image 生成";
   }
 
   if (source === "horde") {
@@ -69,6 +70,14 @@ function getVersionSourceLabel(source) {
   return "本地预览";
 }
 
+function getProviderLabel(provider) {
+  if (provider === "openai") {
+    return "GPT Image";
+  }
+
+  return "AI Horde";
+}
+
 function getGenerationDoneMessage(source) {
   if (source === "local-preview") {
     return "已生成本地预览";
@@ -76,6 +85,10 @@ function getGenerationDoneMessage(source) {
 
   if (source === "horde") {
     return "AI Horde 图片已生成";
+  }
+
+  if (source === "openai") {
+    return "GPT Image 图片已生成";
   }
 
   return "图片已生成";
@@ -261,7 +274,9 @@ async function generateImageFromPrompt(prompt) {
 
   isGenerating = true;
   micButton.disabled = true;
-  setStatus("generating", "正在根据语音生成图片");
+  providerSelect.disabled = true;
+  const provider = providerSelect.value || "horde";
+  setStatus("generating", `正在使用 ${getProviderLabel(provider)} 生成图片`);
 
   try {
     const response = await fetch("/api/generate-image", {
@@ -269,7 +284,10 @@ async function generateImageFromPrompt(prompt) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ prompt: trimmedPrompt })
+      body: JSON.stringify({
+        prompt: trimmedPrompt,
+        provider
+      })
     });
     const payload = await response.json().catch(() => ({}));
 
@@ -287,6 +305,7 @@ async function generateImageFromPrompt(prompt) {
   } finally {
     isGenerating = false;
     micButton.disabled = false;
+    providerSelect.disabled = false;
   }
 }
 
