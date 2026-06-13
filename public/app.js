@@ -54,6 +54,30 @@ let browserSpeechError = "";
 let versions = [];
 let isGenerating = false;
 
+function getVersionSourceLabel(source) {
+  if (source === "openai") {
+    return "AI 生成";
+  }
+
+  if (source === "horde") {
+    return "AI Horde 生成";
+  }
+
+  return "本地预览";
+}
+
+function getGenerationDoneMessage(source) {
+  if (source === "local-preview") {
+    return "已生成本地预览";
+  }
+
+  if (source === "horde") {
+    return "AI Horde 图片已生成";
+  }
+
+  return "图片已生成";
+}
+
 function setStatus(state, message) {
   const nextStatus = statuses[state] || statuses.idle;
   statusChip.dataset.state = state;
@@ -108,7 +132,7 @@ function renderVersions(versions = []) {
     meta.textContent = [
       version.params?.aspectRatio,
       version.params?.size,
-      version.source === "openai" ? "AI 生成" : "本地预览"
+      getVersionSourceLabel(version.source)
     ].filter(Boolean).join(" · ");
 
     item.append(title, detail, meta);
@@ -219,12 +243,7 @@ async function generateImageFromPrompt(prompt) {
     versions = [version, ...versions];
     showGeneratedImage(version);
     renderVersions(versions);
-    setStatus(
-      "ready",
-      version.source === "openai"
-        ? "图片已生成"
-        : "已生成本地预览，配置 Key 后可生成真实 AI 图片"
-    );
+    setStatus("ready", getGenerationDoneMessage(version.source));
   } catch (error) {
     setStatus("error", error.message || "图片生成失败");
   } finally {
