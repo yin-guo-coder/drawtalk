@@ -78,65 +78,71 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function createHttpsProxyAgent(proxyUrl) {
-  const proxy = new URL(proxyUrl);
+class HttpsProxyAgent extends HttpsAgent {
+  constructor(proxyUrl) {
+    super();
+    this.proxy = new URL(proxyUrl);
+  }
 
-  return new HttpsAgent({
-    createConnection(options, callback) {
-      const proxySocket = netConnect(
-        Number(proxy.port || 80),
-        proxy.hostname,
-        () => {
-          const targetHost = `${options.host}:${options.port || 443}`;
-          const headers = [
-            `CONNECT ${targetHost} HTTP/1.1`,
-            `Host: ${targetHost}`,
-            "Proxy-Connection: Keep-Alive"
-          ];
+  createConnection(options, callback) {
+    const proxy = this.proxy;
+    const proxySocket = netConnect(
+      Number(proxy.port || 80),
+      proxy.hostname,
+      () => {
+        const targetHost = `${options.host}:${options.port || 443}`;
+        const headers = [
+          `CONNECT ${targetHost} HTTP/1.1`,
+          `Host: ${targetHost}`,
+          "Proxy-Connection: Keep-Alive"
+        ];
 
-          if (proxy.username || proxy.password) {
-            const credentials = Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64");
-            headers.push(`Proxy-Authorization: Basic ${credentials}`);
-          }
-
-          proxySocket.write(`${headers.join("\r\n")}\r\n\r\n`);
-        }
-      );
-      let buffered = Buffer.alloc(0);
-
-      proxySocket.on("data", function onProxyData(chunk) {
-        buffered = Buffer.concat([buffered, chunk]);
-        const headerEnd = buffered.indexOf("\r\n\r\n");
-
-        if (headerEnd === -1) {
-          return;
+        if (proxy.username || proxy.password) {
+          const credentials = Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64");
+          headers.push(`Proxy-Authorization: Basic ${credentials}`);
         }
 
-        proxySocket.off("data", onProxyData);
+        proxySocket.write(`${headers.join("\r\n")}\r\n\r\n`);
+      }
+    );
+    let buffered = Buffer.alloc(0);
 
-        const header = buffered.slice(0, headerEnd).toString("utf8");
-        const remaining = buffered.slice(headerEnd + 4);
+    proxySocket.on("data", function onProxyData(chunk) {
+      buffered = Buffer.concat([buffered, chunk]);
+      const headerEnd = buffered.indexOf("\r\n\r\n");
 
-        if (!/^HTTP\/1\.[01] 200/i.test(header)) {
-          callback(new Error(`Proxy CONNECT failed: ${header.split("\r\n")[0]}`));
-          proxySocket.destroy();
-          return;
-        }
+      if (headerEnd === -1) {
+        return;
+      }
 
-        if (remaining.length > 0) {
-          proxySocket.unshift(remaining);
-        }
+      proxySocket.off("data", onProxyData);
 
-        const tlsSocket = tlsConnect({
-          socket: proxySocket,
-          servername: options.servername || options.host
-        });
-        callback(null, tlsSocket);
+      const header = buffered.slice(0, headerEnd).toString("utf8");
+      const remaining = buffered.slice(headerEnd + 4);
+
+      if (!/^HTTP\/1\.[01] 200/i.test(header)) {
+        callback(new Error(`Proxy CONNECT failed: ${header.split("\r\n")[0]}`));
+        proxySocket.destroy();
+        return;
+      }
+
+      if (remaining.length > 0) {
+        proxySocket.unshift(remaining);
+      }
+
+      const tlsSocket = tlsConnect({
+        socket: proxySocket,
+        servername: options.servername || options.host
       });
+      callback(null, tlsSocket);
+    });
 
-      proxySocket.on("error", callback);
-    }
-  });
+    proxySocket.on("error", callback);
+  }
+}
+
+function createHttpsProxyAgent(proxyUrl) {
+  return new HttpsProxyAgent(proxyUrl);
 }
 
 async function postJson(url, body, headers = {}) {
