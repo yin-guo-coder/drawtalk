@@ -811,6 +811,20 @@ async function generateImageWithOpenAI({ prompt, size }) {
   };
 }
 
+function normalizeImageProvider(provider) {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+
+  if (["openai", "gpt", "gpt-image", "gpt image"].includes(normalizedProvider)) {
+    return "openai";
+  }
+
+  if (["horde", "ai-horde", "ai horde"].includes(normalizedProvider)) {
+    return "horde";
+  }
+
+  return "";
+}
+
 async function handleGenerateImage(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { error: "Method not allowed" });
@@ -828,7 +842,13 @@ async function handleGenerateImage(request, response) {
   const startedAt = Date.now();
   const aspectRatio = parseAspectRatio(userPrompt);
   const generationPrompt = buildImagePrompt(userPrompt);
-  const provider = (process.env.IMAGE_PROVIDER || "horde").toLowerCase();
+  const provider = normalizeImageProvider(payload.provider || process.env.IMAGE_PROVIDER || "horde");
+
+  if (!provider) {
+    sendJson(response, 400, { error: "Unsupported image provider" });
+    return;
+  }
+
   const params = {
     provider,
     model: provider === "openai" ? process.env.OPENAI_IMAGE_MODEL || "gpt-image-1" : process.env.HORDE_IMAGE_MODEL || "AI Horde",
