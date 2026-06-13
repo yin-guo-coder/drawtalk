@@ -23,6 +23,7 @@ body {
   min-height: 100vh;
   margin: 0;
   color: var(--ink);
+  overflow-x: hidden;
   background:
     linear-gradient(120deg, rgba(23, 108, 114, 0.12), transparent 38%),
     linear-gradient(240deg, rgba(224, 82, 63, 0.12), transparent 42%),
@@ -51,6 +52,7 @@ button {
 
 .workbench,
 .versions-panel {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(251, 252, 251, 0.9);
@@ -152,6 +154,7 @@ h2 {
   position: relative;
   display: grid;
   place-items: center;
+  width: 100%;
   min-height: 320px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -319,7 +322,8 @@ h2 {
 @media (max-width: 840px) {
   .app-shell {
     grid-template-columns: 1fr;
-    width: min(100vw - 20px, 680px);
+    width: calc(100vw - 20px);
+    max-width: 680px;
     height: auto;
     min-height: auto;
     margin: 10px auto;
