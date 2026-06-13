@@ -1,0 +1,348 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f3ee;
+  --surface: #fffaf4;
+  --surface-strong: #ffffff;
+  --ink: #1c2430;
+  --muted: #69717d;
+  --line: #ded7cc;
+  --accent: #e0523f;
+  --accent-dark: #b83127;
+  --teal: #176c72;
+  --green: #4a7c38;
+  --shadow: 0 24px 60px rgba(49, 38, 23, 0.12);
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--ink);
+  background:
+    linear-gradient(120deg, rgba(23, 108, 114, 0.12), transparent 38%),
+    linear-gradient(240deg, rgba(224, 82, 63, 0.12), transparent 42%),
+    var(--bg);
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 20px;
+  width: min(1180px, calc(100vw - 32px));
+  min-height: calc(100vh - 32px);
+  margin: 16px auto;
+}
+
+.workbench,
+.versions-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 250, 244, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.workbench {
+  display: grid;
+  grid-template-rows: auto minmax(320px, 1fr) auto;
+  min-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+
+.topbar,
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.55rem, 2.2vw, 2.3rem);
+  line-height: 1.08;
+}
+
+h2 {
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.status-chip {
+  min-width: 76px;
+  padding: 8px 12px;
+  border: 1px solid rgba(23, 108, 114, 0.24);
+  border-radius: 999px;
+  color: var(--teal);
+  background: rgba(23, 108, 114, 0.08);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.status-chip[data-state="listening"] {
+  color: var(--accent-dark);
+  border-color: rgba(224, 82, 63, 0.28);
+  background: rgba(224, 82, 63, 0.12);
+}
+
+.status-chip[data-state="thinking"] {
+  color: #76560d;
+  border-color: rgba(198, 146, 23, 0.28);
+  background: rgba(198, 146, 23, 0.12);
+}
+
+.status-chip[data-state="ready"] {
+  color: var(--green);
+  border-color: rgba(74, 124, 56, 0.28);
+  background: rgba(74, 124, 56, 0.12);
+}
+
+.stage {
+  display: grid;
+  min-height: 0;
+  padding: 22px;
+}
+
+.image-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111823;
+}
+
+.empty-image {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.empty-sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 28% 22%, rgba(236, 222, 132, 0.5), transparent 12%),
+    linear-gradient(145deg, #203547 0%, #152232 48%, #10171f 100%);
+}
+
+.empty-grid {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  bottom: -16%;
+  height: 48%;
+  transform: perspective(360px) rotateX(58deg);
+  transform-origin: center bottom;
+  background-image:
+    linear-gradient(rgba(224, 82, 63, 0.46) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 108, 114, 0.58) 1px, transparent 1px);
+  background-size: 44px 34px;
+}
+
+.transcript-preview {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: #f9fbff;
+  background: rgba(11, 18, 27, 0.72);
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.voice-panel {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 22px 24px 24px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.mic-button {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border: 0;
+  border-radius: 50%;
+  color: white;
+  background: var(--accent);
+  box-shadow: 0 16px 34px rgba(224, 82, 63, 0.3);
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  touch-action: none;
+}
+
+.mic-button:hover {
+  background: #d94435;
+}
+
+.mic-button:active,
+.mic-button.is-recording {
+  transform: scale(0.96);
+  background: var(--accent-dark);
+  box-shadow: 0 10px 24px rgba(184, 49, 39, 0.34);
+}
+
+.mic-button:focus-visible {
+  outline: 4px solid rgba(23, 108, 114, 0.34);
+  outline-offset: 5px;
+}
+
+.mic-button svg {
+  width: 46px;
+  height: 46px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.voice-copy {
+  min-width: 0;
+}
+
+.voice-title {
+  font-size: 1.2rem;
+  font-weight: 850;
+}
+
+.voice-status {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.versions-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: block;
+}
+
+.version-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  margin: 0;
+  padding: 18px;
+  list-style: none;
+  overflow: auto;
+}
+
+.version-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.version-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.version-item strong {
+  font-size: 0.95rem;
+}
+
+.version-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 840px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    width: min(100vw - 20px, 680px);
+    min-height: auto;
+    margin: 10px auto;
+  }
+
+  .workbench,
+  .versions-panel {
+    min-height: auto;
+  }
+
+  .workbench {
+    grid-template-rows: auto minmax(300px, 54vh) auto;
+  }
+
+  .topbar,
+  .panel-header,
+  .voice-panel {
+    padding-inline: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stage {
+    padding: 14px;
+  }
+
+  .voice-panel {
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .mic-button {
+    width: 88px;
+    height: 88px;
+  }
+
+  .mic-button svg {
+    width: 38px;
+    height: 38px;
+  }
+}

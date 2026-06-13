@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Drawtalk</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workbench" aria-labelledby="app-title">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Drawtalk</p>
+            <h1 id="app-title">语音生成图片</h1>
+          </div>
+          <div class="status-chip" id="status-chip" data-state="idle">待命</div>
+        </header>
+
+        <section class="stage" aria-label="图片展示区">
+          <div class="image-frame" id="image-frame">
+            <div class="empty-image" aria-hidden="true">
+              <div class="empty-sky"></div>
+              <div class="empty-grid"></div>
+            </div>
+            <p id="transcript-preview" class="transcript-preview" hidden></p>
+          </div>
+        </section>
+
+        <section class="voice-panel" aria-label="语音控制">
+          <button class="mic-button" id="mic-button" type="button" aria-label="按住说话">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 14a4 4 0 0 0 4-4V6a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Z"></path>
+              <path d="M19 10a7 7 0 0 1-14 0"></path>
+              <path d="M12 17v4"></path>
+              <path d="M8 21h8"></path>
+            </svg>
+          </button>
+          <div class="voice-copy">
+            <p class="voice-title" id="voice-title">按住说话</p>
+            <p class="voice-status" id="voice-status">说出你想画的画面</p>
+          </div>
+        </section>
+      </section>
+
+      <aside class="versions-panel" aria-labelledby="versions-title">
+        <div class="panel-header">
+          <p class="eyebrow">Versions</p>
+          <h2 id="versions-title">版本列表</h2>
+        </div>
+        <ol class="version-list" id="version-list">
+          <li class="version-empty">暂无版本</li>
+        </ol>
+      </aside>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
