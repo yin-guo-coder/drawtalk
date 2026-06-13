@@ -626,8 +626,8 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
 
 function getHordeDimensions(aspectRatio) {
   const dimensions = {
-    "16:9": { width: 512, height: 288 },
-    "9:16": { width: 288, height: 512 },
+    "16:9": { width: 576, height: 320 },
+    "9:16": { width: 320, height: 576 },
     "3:4": { width: 384, height: 512 },
     "4:3": { width: 512, height: 384 },
     "1:1": { width: 384, height: 384 }
