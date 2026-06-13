@@ -38,8 +38,8 @@ button {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   gap: 20px;
   width: min(1180px, calc(100vw - 32px));
-  height: calc(100vh - 32px);
-  min-height: 640px;
+  height: calc(100vh - 48px);
+  min-height: 620px;
   margin: 16px auto;
 }
 
