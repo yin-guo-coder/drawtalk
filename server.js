@@ -495,11 +495,11 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
 
 function getHordeDimensions(aspectRatio) {
   const dimensions = {
-    "16:9": { width: 576, height: 320 },
-    "9:16": { width: 320, height: 576 },
-    "3:4": { width: 448, height: 576 },
-    "4:3": { width: 576, height: 448 },
-    "1:1": { width: 512, height: 512 }
+    "16:9": { width: 512, height: 288 },
+    "9:16": { width: 288, height: 512 },
+    "3:4": { width: 384, height: 512 },
+    "4:3": { width: 512, height: 384 },
+    "1:1": { width: 384, height: 384 }
   };
 
   return dimensions[aspectRatio.label] || dimensions["1:1"];
@@ -528,7 +528,7 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
       n: 1,
       width: dimensions.width,
       height: dimensions.height,
-      steps: Number(process.env.HORDE_STEPS || 20),
+      steps: Number(process.env.HORDE_STEPS || 10),
       cfg_scale: Number(process.env.HORDE_CFG_SCALE || 7)
     },
     nsfw: false,
