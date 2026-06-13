@@ -35,7 +35,7 @@ const audioExtensions = {
 
 await loadEnvFile();
 
-function getOpenAIProxyUrl() {
+function getOutboundProxyUrl() {
   return process.env.OPENAI_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "";
 }
 
@@ -145,21 +145,23 @@ function createHttpsProxyAgent(proxyUrl) {
   return new HttpsProxyAgent(proxyUrl);
 }
 
-async function postJson(url, body, headers = {}) {
-  const proxyUrl = getOpenAIProxyUrl();
+async function requestJson(url, { method = "GET", body, headers = {}, timeoutMs = 120000 } = {}) {
+  const proxyUrl = getOutboundProxyUrl();
   const requestUrl = new URL(url);
-  const bodyText = JSON.stringify(body);
+  const bodyText = body === undefined ? undefined : JSON.stringify(body);
 
   return new Promise((resolveRequest, rejectRequest) => {
     const request = httpsRequest(requestUrl, {
-      method: "POST",
+      method,
       agent: proxyUrl ? createHttpsProxyAgent(proxyUrl) : undefined,
       headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(bodyText),
+        ...(bodyText ? {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(bodyText)
+        } : {}),
         ...headers
       },
-      timeout: 120000
+      timeout: timeoutMs
     }, (apiResponse) => {
       const chunks = [];
 
@@ -190,6 +192,27 @@ async function postJson(url, body, headers = {}) {
     });
     request.on("error", rejectRequest);
     request.end(bodyText);
+  });
+}
+
+async function postJson(url, body, headers = {}) {
+  return requestJson(url, {
+    method: "POST",
+    body,
+    headers
+  });
+}
+
+async function getJson(url, headers = {}) {
+  return requestJson(url, {
+    method: "GET",
+    headers
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
   });
 }
 
@@ -422,14 +445,32 @@ function buildLocalPreviewSvg(prompt, aspectRatio) {
 </svg>`;
 }
 
-async function saveGeneratedImage({ imageBase64, extension = "png" }) {
+function detectImageExtension(imageBuffer) {
+  if (imageBuffer.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) {
+    return "png";
+  }
+
+  if (imageBuffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) {
+    return "jpg";
+  }
+
+  if (imageBuffer.subarray(0, 4).toString("ascii") === "RIFF" && imageBuffer.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "webp";
+  }
+
+  return "png";
+}
+
+async function saveGeneratedImage({ imageBase64, extension }) {
   const versionId = nextVersionId;
   nextVersionId += 1;
-  const fileName = `version-${versionId}.${extension}`;
+  const imageBuffer = Buffer.from(imageBase64, "base64");
+  const imageExtension = extension || detectImageExtension(imageBuffer);
+  const fileName = `version-${versionId}.${imageExtension}`;
   const imagePath = resolve(outputsDir, fileName);
 
   await mkdir(outputsDir, { recursive: true });
-  await writeFile(imagePath, Buffer.from(imageBase64, "base64"));
+  await writeFile(imagePath, imageBuffer);
 
   return {
     versionId,
@@ -450,6 +491,130 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
     versionId,
     imageUrl: `/outputs/${fileName}`
   };
+}
+
+function getHordeDimensions(aspectRatio) {
+  const dimensions = {
+    "16:9": { width: 1024, height: 576 },
+    "9:16": { width: 576, height: 1024 },
+    "3:4": { width: 768, height: 1024 },
+    "4:3": { width: 1024, height: 768 },
+    "1:1": { width: 768, height: 768 }
+  };
+
+  return dimensions[aspectRatio.label] || dimensions["1:1"];
+}
+
+function normalizeImageBase64(image) {
+  if (!image) {
+    return "";
+  }
+
+  return image.includes(",") ? image.split(",").pop() : image;
+}
+
+function getHordeHeaders() {
+  return {
+    apikey: process.env.HORDE_API_KEY || "0000000000",
+    "Client-Agent": "drawtalk:0.1.0:https://localhost"
+  };
+}
+
+async function generateImageWithHorde({ prompt, aspectRatio }) {
+  const dimensions = getHordeDimensions(aspectRatio);
+  const requestBody = {
+    prompt,
+    params: {
+      n: 1,
+      width: dimensions.width,
+      height: dimensions.height,
+      steps: Number(process.env.HORDE_STEPS || 20),
+      cfg_scale: Number(process.env.HORDE_CFG_SCALE || 7)
+    },
+    nsfw: false,
+    trusted_workers: false,
+    censor_nsfw: true,
+    r2: false
+  };
+
+  if (process.env.HORDE_IMAGE_MODEL) {
+    requestBody.models = [process.env.HORDE_IMAGE_MODEL];
+  }
+
+  const createResponse = await postJson(
+    "https://aihorde.net/api/v2/generate/async",
+    requestBody,
+    getHordeHeaders()
+  );
+
+  if (!createResponse.ok) {
+    const message = createResponse.payload.message || createResponse.payload.error?.message || "AI Horde image generation request failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const generationId = createResponse.payload.id;
+
+  if (!generationId) {
+    const error = new Error("AI Horde did not return a generation id");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const timeoutMs = Number(process.env.HORDE_TIMEOUT_MS || 180000);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const checkResponse = await getJson(
+      `https://aihorde.net/api/v2/generate/check/${generationId}`,
+      getHordeHeaders()
+    );
+
+    if (!checkResponse.ok) {
+      const message = checkResponse.payload.message || checkResponse.payload.error?.message || "AI Horde status check failed";
+      const error = new Error(message);
+      error.statusCode = 502;
+      throw error;
+    }
+
+    if (checkResponse.payload.done) {
+      const statusResponse = await getJson(
+        `https://aihorde.net/api/v2/generate/status/${generationId}`,
+        getHordeHeaders()
+      );
+
+      if (!statusResponse.ok) {
+        const message = statusResponse.payload.message || statusResponse.payload.error?.message || "AI Horde result fetch failed";
+        const error = new Error(message);
+        error.statusCode = 502;
+        throw error;
+      }
+
+      const generation = statusResponse.payload.generations?.[0];
+      const imageBase64 = normalizeImageBase64(generation?.img);
+
+      if (!imageBase64 || generation?.censored) {
+        const error = new Error(generation?.censored ? "AI Horde censored this generation" : "AI Horde did not return image data");
+        error.statusCode = 502;
+        throw error;
+      }
+
+      return {
+        imageBase64,
+        model: generation.model || process.env.HORDE_IMAGE_MODEL || "AI Horde",
+        dimensions,
+        generationId
+      };
+    }
+
+    const waitSeconds = Math.max(2, Math.min(Number(checkResponse.payload.wait_time || 4), 10));
+    await delay(waitSeconds * 1000);
+  }
+
+  const error = new Error("AI Horde generation timed out. Please try again.");
+  error.statusCode = 504;
+  throw error;
 }
 
 async function generateImageWithOpenAI({ prompt, size }) {
@@ -509,23 +674,41 @@ async function handleGenerateImage(request, response) {
   const startedAt = Date.now();
   const aspectRatio = parseAspectRatio(userPrompt);
   const generationPrompt = buildImagePrompt(userPrompt);
+  const provider = (process.env.IMAGE_PROVIDER || "horde").toLowerCase();
   const params = {
-    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+    provider,
+    model: provider === "openai" ? process.env.OPENAI_IMAGE_MODEL || "gpt-image-1" : process.env.HORDE_IMAGE_MODEL || "AI Horde",
     size: aspectRatio.size,
     n: 1,
     aspectRatio: aspectRatio.label
   };
   let savedImage;
-  let source = "openai";
+  let source = provider;
 
   try {
-    const generated = await generateImageWithOpenAI({
-      prompt: generationPrompt,
-      size: aspectRatio.size
-    });
+    if (provider === "openai") {
+      const generated = await generateImageWithOpenAI({
+        prompt: generationPrompt,
+        size: aspectRatio.size
+      });
 
-    params.model = generated.model;
-    savedImage = await saveGeneratedImage({ imageBase64: generated.imageBase64 });
+      params.model = generated.model;
+      savedImage = await saveGeneratedImage({ imageBase64: generated.imageBase64 });
+    } else if (provider === "horde") {
+      const generated = await generateImageWithHorde({
+        prompt: generationPrompt,
+        aspectRatio
+      });
+
+      params.model = generated.model;
+      params.size = `${generated.dimensions.width}x${generated.dimensions.height}`;
+      params.generationId = generated.generationId;
+      savedImage = await saveGeneratedImage({ imageBase64: generated.imageBase64 });
+    } else {
+      const error = new Error(`Unsupported IMAGE_PROVIDER: ${provider}`);
+      error.statusCode = 400;
+      throw error;
+    }
   } catch (error) {
     if (error.statusCode !== 503) {
       throw error;
