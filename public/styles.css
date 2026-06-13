@@ -117,10 +117,22 @@ h2 {
   background: rgba(198, 146, 23, 0.12);
 }
 
+.status-chip[data-state="generating"] {
+  color: #245d92;
+  border-color: rgba(36, 93, 146, 0.28);
+  background: rgba(36, 93, 146, 0.12);
+}
+
 .status-chip[data-state="ready"] {
   color: var(--green);
   border-color: rgba(74, 124, 56, 0.28);
   background: rgba(74, 124, 56, 0.12);
+}
+
+.status-chip[data-state="error"] {
+  color: #8c2b20;
+  border-color: rgba(140, 43, 32, 0.28);
+  background: rgba(140, 43, 32, 0.12);
 }
 
 .stage {

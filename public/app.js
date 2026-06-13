@@ -24,7 +24,12 @@ const statuses = {
   ready: {
     chip: "已识别",
     title: "转写完成",
-    message: "第 1 步只验证录音和转写"
+    message: "可以继续下一次语音"
+  },
+  generating: {
+    chip: "生成中",
+    title: "正在生成",
+    message: "图片生成链路待接入"
   },
   error: {
     chip: "异常",
@@ -32,6 +37,13 @@ const statuses = {
     message: "请再试一次"
   }
 };
+
+let mediaStream;
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+let wantsRecording = false;
+let activePointerId;
 
 function setStatus(state, message) {
   const nextStatus = statuses[state] || statuses.idle;
@@ -82,3 +94,170 @@ window.drawtalkUi = {
   showTranscript,
   renderVersions
 };
+
+function getAudioMimeType() {
+  const mimeTypes = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus"
+  ];
+
+  if (!window.MediaRecorder) {
+    return "";
+  }
+
+  return mimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
+}
+
+async function ensureMediaStream() {
+  if (mediaStream) {
+    return mediaStream;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    throw new Error("当前浏览器不支持录音");
+  }
+
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true
+    }
+  });
+
+  return mediaStream;
+}
+
+async function startRecording() {
+  if (isRecording) {
+    return;
+  }
+
+  wantsRecording = true;
+
+  try {
+    const stream = await ensureMediaStream();
+
+    if (!wantsRecording) {
+      return;
+    }
+
+    const mimeType = getAudioMimeType();
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    });
+
+    mediaRecorder.addEventListener("stop", () => {
+      void uploadRecording();
+    }, { once: true });
+
+    mediaRecorder.start();
+    isRecording = true;
+    micButton.classList.add("is-recording");
+    setStatus("listening");
+    showTranscript("");
+  } catch (error) {
+    setStatus("error", error.message || "麦克风不可用");
+  }
+}
+
+function stopRecording() {
+  wantsRecording = false;
+
+  if (!isRecording || !mediaRecorder) {
+    return;
+  }
+
+  isRecording = false;
+  micButton.classList.remove("is-recording");
+  setStatus("thinking");
+
+  if (mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+}
+
+async function uploadRecording() {
+  const mimeType = mediaRecorder?.mimeType || "audio/webm";
+  const audioBlob = new Blob(audioChunks, { type: mimeType });
+  audioChunks = [];
+
+  if (audioBlob.size === 0) {
+    setStatus("error", "没有录到声音");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: {
+        "Content-Type": audioBlob.type || "audio/webm"
+      },
+      body: audioBlob
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.error || "转写失败");
+    }
+
+    const transcript = payload.text || "";
+    showTranscript(transcript);
+    setStatus("ready", transcript ? "语音已转成文字" : "没有识别到文字");
+  } catch (error) {
+    setStatus("error", error.message || "转写失败");
+  }
+}
+
+micButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  activePointerId = event.pointerId;
+  micButton.setPointerCapture(activePointerId);
+  void startRecording();
+});
+
+micButton.addEventListener("pointerup", (event) => {
+  event.preventDefault();
+  activePointerId = undefined;
+  stopRecording();
+});
+
+micButton.addEventListener("pointercancel", () => {
+  activePointerId = undefined;
+  stopRecording();
+});
+
+micButton.addEventListener("lostpointercapture", () => {
+  if (activePointerId !== undefined) {
+    activePointerId = undefined;
+    stopRecording();
+  }
+});
+
+micButton.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
+micButton.addEventListener("keydown", (event) => {
+  if (event.repeat || (event.key !== " " && event.key !== "Enter")) {
+    return;
+  }
+
+  event.preventDefault();
+  void startRecording();
+});
+
+micButton.addEventListener("keyup", (event) => {
+  if (event.key !== " " && event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  stopRecording();
+});
