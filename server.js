@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect as netConnect } from "node:net";
@@ -148,6 +148,8 @@ function createHttpsProxyAgent(proxyUrl) {
 async function requestRaw(url, { method = "GET", body, headers = {}, timeoutMs = 120000 } = {}) {
   const proxyUrl = getOutboundProxyUrl();
   const requestUrl = new URL(url);
+  const transport = requestUrl.protocol === "http:" ? httpRequest : httpsRequest;
+  const useProxy = requestUrl.protocol === "https:" && proxyUrl;
   const requestHeaders = { ...headers };
 
   if (body !== undefined && !("Content-Length" in requestHeaders) && !("content-length" in requestHeaders)) {
@@ -155,9 +157,9 @@ async function requestRaw(url, { method = "GET", body, headers = {}, timeoutMs =
   }
 
   return new Promise((resolveRequest, rejectRequest) => {
-    const request = httpsRequest(requestUrl, {
+    const request = transport(requestUrl, {
       method,
-      agent: proxyUrl ? createHttpsProxyAgent(proxyUrl) : undefined,
+      agent: useProxy ? createHttpsProxyAgent(proxyUrl) : undefined,
       headers: requestHeaders,
       timeout: timeoutMs
     }, (apiResponse) => {
@@ -180,13 +182,14 @@ async function requestRaw(url, { method = "GET", body, headers = {}, timeoutMs =
         resolveRequest({
           ok: apiResponse.statusCode >= 200 && apiResponse.statusCode < 300,
           status: apiResponse.statusCode,
+          text,
           payload
         });
       });
     });
 
     request.on("timeout", () => {
-      request.destroy(new Error("OpenAI request timed out"));
+      request.destroy(new Error("Outbound request timed out"));
     });
     request.on("error", rejectRequest);
     request.end(body);
@@ -307,7 +310,220 @@ function normalizeTranscriptForImagePrompt(text) {
     .replace(/(一[只条][^，。,.!?！？]*?赛博朋克(?:风格)?的?)(雨衣|语音)/gu, "$1鱼");
 }
 
-async function transcribeWithOpenAI(audioBuffer, contentType) {
+function getTranscriptionProvider() {
+  return String(process.env.TRANSCRIBE_PROVIDER || "mimo").trim().toLowerCase();
+}
+
+function getMimoAsrModel() {
+  return process.env.MIMO_ASR_MODEL || "mimo-v2.5-asr";
+}
+
+function getMimoAsrBaseUrl() {
+  return (process.env.MIMO_ASR_BASE_URL || "https://xiaomimimo-mimo-v2-5-asr.hf.space").replace(/\/+$/u, "");
+}
+
+function getMimoAsrLanguage() {
+  return process.env.MIMO_ASR_LANGUAGE || "Chinese";
+}
+
+function getMimoAuthHeaders() {
+  if (!process.env.HF_TOKEN) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${process.env.HF_TOKEN}`
+  };
+}
+
+function getAudioFileName(contentType) {
+  return `speech.${getAudioExtension(contentType)}`;
+}
+
+function extractMimoTranscription(payload) {
+  if (!payload) {
+    return "";
+  }
+
+  if (typeof payload === "string") {
+    return payload.trim();
+  }
+
+  if (typeof payload.text === "string") {
+    return payload.text.trim();
+  }
+
+  if (typeof payload.transcription === "string") {
+    return payload.transcription.trim();
+  }
+
+  if (typeof payload.result === "string") {
+    return payload.result.trim();
+  }
+
+  if (Array.isArray(payload.data)) {
+    const textOutput = payload.data.find((item) => typeof item === "string" && item.trim());
+    return textOutput ? textOutput.trim() : "";
+  }
+
+  if (Array.isArray(payload)) {
+    const textOutput = payload.find((item) => typeof item === "string" && item.trim());
+    return textOutput ? textOutput.trim() : "";
+  }
+
+  return "";
+}
+
+function extractGradioEventPayload(eventText) {
+  const dataLines = String(eventText || "")
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .filter((line) => line && line !== "[DONE]");
+
+  for (let index = dataLines.length - 1; index >= 0; index -= 1) {
+    try {
+      return JSON.parse(dataLines[index]);
+    } catch {
+      // Keep searching earlier event payloads.
+    }
+  }
+
+  return undefined;
+}
+
+function getGradioUploadedFile(uploadPayload, fileName, contentType, audioBuffer) {
+  const uploadedFile = Array.isArray(uploadPayload)
+    ? uploadPayload[0]
+    : uploadPayload?.files?.[0] || uploadPayload?.file || uploadPayload?.path;
+  const uploadedPath = typeof uploadedFile === "string" ? uploadedFile : uploadedFile?.path || uploadedFile?.name;
+
+  if (!uploadedPath) {
+    const error = new Error("MiMo ASR did not return an uploaded audio path");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    path: uploadedPath,
+    orig_name: fileName,
+    size: audioBuffer.byteLength,
+    mime_type: contentType || "audio/webm",
+    meta: {
+      _type: "gradio.FileData"
+    }
+  };
+}
+
+async function callMimoLocalEndpoint(audioBuffer, contentType) {
+  const endpoint = process.env.MIMO_ASR_API_URL;
+
+  if (!endpoint) {
+    return undefined;
+  }
+
+  const fileName = getAudioFileName(contentType);
+  const formData = new FormData();
+  formData.append("file", new File([audioBuffer], fileName, {
+    type: contentType || "audio/webm"
+  }));
+  formData.append("model", getMimoAsrModel());
+  formData.append("language", getMimoAsrLanguage());
+
+  const apiResponse = await postFormData(endpoint, formData, getMimoAuthHeaders());
+
+  if (!apiResponse.ok) {
+    const message = apiResponse.payload.error?.message
+      || apiResponse.payload.error
+      || apiResponse.payload.message
+      || "MiMo ASR endpoint failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return extractMimoTranscription(apiResponse.payload);
+}
+
+async function callMimoGradioSpace(audioBuffer, contentType) {
+  const baseUrl = getMimoAsrBaseUrl();
+  const fileName = getAudioFileName(contentType);
+  const formData = new FormData();
+  formData.append("files", new File([audioBuffer], fileName, {
+    type: contentType || "audio/webm"
+  }));
+
+  const uploadResponse = await postFormData(`${baseUrl}/gradio_api/upload`, formData, getMimoAuthHeaders());
+
+  if (!uploadResponse.ok) {
+    const message = uploadResponse.payload.error?.message
+      || uploadResponse.payload.error
+      || uploadResponse.payload.message
+      || "MiMo ASR audio upload failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const audioFile = getGradioUploadedFile(uploadResponse.payload, fileName, contentType, audioBuffer);
+  const data = [audioFile, null, getMimoAsrLanguage()];
+  const endpoints = [
+    process.env.MIMO_ASR_GRADIO_API || "predict",
+    "transcribe"
+  ].filter(Boolean);
+  let lastError;
+
+  for (const endpoint of endpoints) {
+    try {
+      const createResponse = await postJson(`${baseUrl}/gradio_api/call/${endpoint}`, { data }, getMimoAuthHeaders());
+
+      if (!createResponse.ok) {
+        throw new Error(createResponse.payload.error?.message || createResponse.payload.error || createResponse.payload.message || `MiMo ASR call failed: ${endpoint}`);
+      }
+
+      const eventId = createResponse.payload.event_id || createResponse.payload.hash;
+
+      if (eventId) {
+        const resultResponse = await requestRaw(`${baseUrl}/gradio_api/call/${endpoint}/${eventId}`, {
+          headers: getMimoAuthHeaders(),
+          timeoutMs: Number(process.env.MIMO_ASR_TIMEOUT_MS || 180000)
+        });
+
+        if (!resultResponse.ok) {
+          throw new Error(resultResponse.payload.error?.message || resultResponse.payload.error || resultResponse.payload.message || `MiMo ASR result failed: ${endpoint}`);
+        }
+
+        return extractMimoTranscription({
+          data: extractGradioEventPayload(resultResponse.text)
+        });
+      }
+
+      return extractMimoTranscription(createResponse.payload);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const legacyResponse = await postJson(`${baseUrl}/api/predict`, {
+    data,
+    fn_index: 0
+  }, getMimoAuthHeaders());
+
+  if (!legacyResponse.ok) {
+    const message = legacyResponse.payload.error?.message
+      || legacyResponse.payload.error
+      || legacyResponse.payload.message
+      || lastError?.message
+      || "MiMo ASR prediction failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return extractMimoTranscription(legacyResponse.payload);
+}
+
+async function transcribeWithMimo(audioBuffer, contentType) {
   if (process.env.MOCK_TRANSCRIPT) {
     return {
       text: normalizeTranscriptForImagePrompt(process.env.MOCK_TRANSCRIPT),
@@ -316,6 +532,24 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
     };
   }
 
+  const localText = await callMimoLocalEndpoint(audioBuffer, contentType);
+  const text = localText || await callMimoGradioSpace(audioBuffer, contentType);
+
+  if (!text) {
+    const error = new Error("MiMo ASR did not return transcription text");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    text: normalizeTranscriptForImagePrompt(text),
+    rawText: text,
+    source: "mimo",
+    model: getMimoAsrModel()
+  };
+}
+
+async function transcribeWithOpenAI(audioBuffer, contentType) {
   if (!process.env.OPENAI_API_KEY) {
     const error = new Error("Missing OPENAI_API_KEY. Add it to .env before transcribing.");
     error.statusCode = 503;
@@ -364,6 +598,22 @@ async function transcribeWithOpenAI(audioBuffer, contentType) {
   };
 }
 
+async function transcribeAudio(audioBuffer, contentType) {
+  const provider = getTranscriptionProvider();
+
+  if (provider === "mimo" || provider === "mimo-v2.5-asr" || provider === "xiaomi") {
+    return transcribeWithMimo(audioBuffer, contentType);
+  }
+
+  if (provider === "openai") {
+    return transcribeWithOpenAI(audioBuffer, contentType);
+  }
+
+  const error = new Error(`Unsupported transcription provider: ${provider}`);
+  error.statusCode = 400;
+  throw error;
+}
+
 async function handleTranscribe(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { error: "Method not allowed" });
@@ -385,7 +635,7 @@ async function handleTranscribe(request, response) {
   }
 
   const startedAt = Date.now();
-  const result = await transcribeWithOpenAI(audioBuffer, contentType);
+  const result = await transcribeAudio(audioBuffer, contentType);
 
   sendJson(response, 200, {
     ok: true,
