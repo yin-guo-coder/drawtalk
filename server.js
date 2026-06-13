@@ -532,58 +532,84 @@ async function callAudeeringDirectEndpoint(audioBuffer, contentType) {
 async function callAudeeringGradioSpace(audioBuffer, contentType) {
   const baseUrl = getAudeeringBaseUrl();
   const fileName = getAudioFileName(contentType);
-  const formData = new FormData();
-  formData.append("files", new File([audioBuffer], fileName, {
-    type: contentType || "audio/webm"
-  }));
+  const uploadPaths = [
+    { prefix: "/gradio_api", path: "/gradio_api/upload" },
+    { prefix: "", path: "/upload" }
+  ];
+  let uploadResult;
+  let uploadError;
 
-  const uploadResponse = await postFormData(`${baseUrl}/gradio_api/upload`, formData);
+  for (const uploadPath of uploadPaths) {
+    const formData = new FormData();
+    formData.append("files", new File([audioBuffer], fileName, {
+      type: contentType || "audio/webm"
+    }));
 
-  if (!uploadResponse.ok) {
-    const message = uploadResponse.payload.error?.message
+    const uploadResponse = await postFormData(`${baseUrl}${uploadPath.path}`, formData);
+
+    if (uploadResponse.ok) {
+      uploadResult = {
+        prefix: uploadPath.prefix,
+        payload: uploadResponse.payload
+      };
+      break;
+    }
+
+    uploadError = uploadResponse.payload.error?.message
       || uploadResponse.payload.error
       || uploadResponse.payload.message
-      || "audEERING speaker analysis audio upload failed";
-    const error = new Error(message);
+      || `audEERING speaker analysis audio upload failed: ${uploadPath.path}`;
+  }
+
+  if (!uploadResult) {
+    const error = new Error(uploadError || "audEERING speaker analysis audio upload failed");
     error.statusCode = 502;
     throw error;
   }
 
-  const audioFile = getGradioUploadedFile(uploadResponse.payload, fileName, contentType, audioBuffer);
+  const audioFile = getGradioUploadedFile(uploadResult.payload, fileName, contentType, audioBuffer);
   const data = [audioFile];
   const endpoints = [
-    process.env.AUDEERING_GRADIO_API || "predict",
-    "recognize"
-  ].filter(Boolean);
+    process.env.AUDEERING_GRADIO_API,
+    "recognize",
+    "predict"
+  ].filter(Boolean).filter((endpoint, index, allEndpoints) => allEndpoints.indexOf(endpoint) === index);
+  const callPrefixes = [
+    uploadResult.prefix,
+    uploadResult.prefix === "/gradio_api" ? "" : "/gradio_api"
+  ];
   let lastError;
 
   for (const endpoint of endpoints) {
-    try {
-      const createResponse = await postJson(`${baseUrl}/gradio_api/call/${endpoint}`, { data });
+    for (const prefix of callPrefixes) {
+      try {
+        const callBaseUrl = `${baseUrl}${prefix}/call/${endpoint}`;
+        const createResponse = await postJson(callBaseUrl, { data });
 
-      if (!createResponse.ok) {
-        throw new Error(createResponse.payload.error?.message || createResponse.payload.error || createResponse.payload.message || `audEERING analysis call failed: ${endpoint}`);
-      }
-
-      const eventId = createResponse.payload.event_id || createResponse.payload.hash;
-
-      if (eventId) {
-        const resultResponse = await requestRaw(`${baseUrl}/gradio_api/call/${endpoint}/${eventId}`, {
-          timeoutMs: getAudeeringTimeoutMs()
-        });
-
-        if (!resultResponse.ok) {
-          throw new Error(resultResponse.payload.error?.message || resultResponse.payload.error || resultResponse.payload.message || `audEERING analysis result failed: ${endpoint}`);
+        if (!createResponse.ok) {
+          throw new Error(createResponse.payload.error?.message || createResponse.payload.error || createResponse.payload.message || `audEERING analysis call failed: ${prefix}/call/${endpoint}`);
         }
 
-        return extractAudeeringSpeaker({
-          data: extractGradioEventPayload(resultResponse.text)
-        });
-      }
+        const eventId = createResponse.payload.event_id || createResponse.payload.hash;
 
-      return extractAudeeringSpeaker(createResponse.payload);
-    } catch (error) {
-      lastError = error;
+        if (eventId) {
+          const resultResponse = await requestRaw(`${callBaseUrl}/${eventId}`, {
+            timeoutMs: getAudeeringTimeoutMs()
+          });
+
+          if (!resultResponse.ok) {
+            throw new Error(resultResponse.payload.error?.message || resultResponse.payload.error || resultResponse.payload.message || `audEERING analysis result failed: ${prefix}/call/${endpoint}`);
+          }
+
+          return extractAudeeringSpeaker({
+            data: extractGradioEventPayload(resultResponse.text)
+          });
+        }
+
+        return extractAudeeringSpeaker(createResponse.payload);
+      } catch (error) {
+        lastError = error;
+      }
     }
   }
 
