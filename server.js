@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize, relative, resolve } from "node:path";
+import { extname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -180,11 +180,11 @@ async function handleTranscribe(request, response) {
 async function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
-  const normalizedPath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  const staticPath = normalizedPath === "/" ? "/index.html" : normalizedPath;
-  const filePath = resolve(join(publicDir, staticPath));
+  const staticPath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const filePath = resolve(publicDir, staticPath);
+  const relativePath = relative(publicDir, filePath);
 
-  if (relative(publicDir, filePath).startsWith("..")) {
+  if (relativePath.startsWith("..") || relativePath.startsWith("/") || relativePath.startsWith("\\")) {
     sendJson(response, 403, { error: "Forbidden" });
     return;
   }
