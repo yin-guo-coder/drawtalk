@@ -1,16 +1,16 @@
 :root {
   color-scheme: light;
-  --bg: #f7f3ee;
-  --surface: #fffaf4;
+  --bg: #eef2f4;
+  --surface: #fbfcfb;
   --surface-strong: #ffffff;
   --ink: #1c2430;
   --muted: #69717d;
-  --line: #ded7cc;
+  --line: #d6dde2;
   --accent: #e0523f;
   --accent-dark: #b83127;
   --teal: #176c72;
   --green: #4a7c38;
-  --shadow: 0 24px 60px rgba(49, 38, 23, 0.12);
+  --shadow: 0 24px 60px rgba(29, 42, 52, 0.12);
   font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
 
@@ -38,7 +38,8 @@ button {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   gap: 20px;
   width: min(1180px, calc(100vw - 32px));
-  min-height: calc(100vh - 32px);
+  height: calc(100vh - 32px);
+  min-height: 640px;
   margin: 16px auto;
 }
 
@@ -46,14 +47,14 @@ button {
 .versions-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 250, 244, 0.86);
+  background: rgba(251, 252, 251, 0.9);
   box-shadow: var(--shadow);
 }
 
 .workbench {
   display: grid;
   grid-template-rows: auto minmax(320px, 1fr) auto;
-  min-height: calc(100vh - 32px);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -264,7 +265,7 @@ h2 {
 .versions-panel {
   display: grid;
   grid-template-rows: auto 1fr;
-  min-height: calc(100vh - 32px);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -313,6 +314,7 @@ h2 {
   .app-shell {
     grid-template-columns: 1fr;
     width: min(100vw - 20px, 680px);
+    height: auto;
     min-height: auto;
     margin: 10px auto;
   }
