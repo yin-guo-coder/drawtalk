@@ -587,7 +587,7 @@ async function startRecording() {
     startPassiveSpeechFallback();
     isRecording = true;
     micButton.classList.add("is-recording");
-    setStatus("listening", "请开始说话，松开后使用 OSUM 语音模型识别");
+    setStatus("listening", "请开始说话，松开后进行 ASR 转写和说话人分析");
     clearSpeechInsights();
     showTranscript("");
   } catch (error) {
@@ -609,7 +609,7 @@ function stopRecording() {
 
   isRecording = false;
   micButton.classList.remove("is-recording");
-  setStatus("thinking", "正在使用 OSUM 语音模型识别");
+  setStatus("thinking", "正在进行 ASR 转写和说话人分析");
   stopPassiveSpeechFallback();
 
   if (mediaRecorder.state !== "inactive") {
@@ -628,7 +628,7 @@ async function uploadRecording() {
   }
 
   try {
-    setStatus("thinking", "正在上传语音并使用 OSUM 识别");
+    setStatus("thinking", "正在上传语音并分析说话人属性");
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
@@ -651,13 +651,13 @@ async function uploadRecording() {
 
     if (fallbackTranscript) {
       clearSpeechInsights();
-      setStatus("thinking", "OSUM 语音识别不可用，已使用浏览器识别结果");
+      setStatus("thinking", "ASR 服务不可用，已使用浏览器识别结果");
       void handleRecognizedText(fallbackTranscript);
       return;
     }
 
     clearSpeechInsights();
-    setStatus("error", error.message || "OSUM 语音识别失败");
+    setStatus("error", error.message || "语音转写失败");
   }
 }
 
