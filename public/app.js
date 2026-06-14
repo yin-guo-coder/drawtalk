@@ -703,6 +703,7 @@ window.drawtalkUi = {
   setStatus,
   showTranscript,
   showInpaintRegion,
+  editImageFromCommand,
   speakAssistantReply,
   getAssistantVoicePack,
   chooseSpeechVoice,
@@ -903,6 +904,49 @@ async function generateImageFromPrompt(prompt) {
   }
 }
 
+async function editImageFromCommand(command) {
+  if (!command || isGenerating) {
+    return;
+  }
+
+  isGenerating = true;
+  micButton.disabled = true;
+  providerSelect.disabled = true;
+  const provider = providerSelect.value || "horde";
+  setStatus("generating", `正在局部重绘${command.inpaintRegion?.label || command.targetObject || "图片"}`);
+
+  try {
+    const response = await fetch("/api/edit-image", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        command,
+        provider
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.error || "局部重绘失败");
+    }
+
+    const version = payload.version;
+    versions = Array.isArray(payload.versions) ? payload.versions : [version, ...versions];
+    showGeneratedImage(version);
+    renderVersions(versions);
+    showInpaintRegion(command.inpaintRegion);
+    setStatus("ready", "局部重绘已生成新版本");
+  } catch (error) {
+    setStatus("error", error.message || "局部重绘失败");
+  } finally {
+    isGenerating = false;
+    micButton.disabled = false;
+    providerSelect.disabled = false;
+  }
+}
+
 async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
   const response = await fetch("/api/command", {
     method: "POST",
@@ -1083,7 +1127,9 @@ async function handleRecognizedText(transcript, { audioBlob, speakerProfile = la
       const commandToGenerate = pendingCommand;
 
       if (commandToGenerate.intent === "edit") {
-        setStatus("error", "局部重绘接口正在接入，请稍后再确认。");
+        pendingCommand = null;
+        setStatus("generating", "已确认，正在局部重绘");
+        void editImageFromCommand(commandToGenerate);
         return;
       }
 

@@ -2,7 +2,7 @@ import { createServer, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect as netConnect } from "node:net";
-import { extname, relative, resolve } from "node:path";
+import { basename, extname, relative, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
 
@@ -1929,6 +1929,142 @@ async function saveLocalPreviewImage({ prompt, aspectRatio }) {
   };
 }
 
+function getRegionBox(regionType) {
+  const boxes = {
+    background: { x: 0.04, y: 0.05, width: 0.92, height: 0.9 },
+    left: { x: 0.04, y: 0.08, width: 0.42, height: 0.84 },
+    right: { x: 0.54, y: 0.08, width: 0.42, height: 0.84 },
+    top: { x: 0.08, y: 0.06, width: 0.84, height: 0.38 },
+    bottom: { x: 0.08, y: 0.56, width: 0.84, height: 0.38 },
+    person: { x: 0.32, y: 0.15, width: 0.36, height: 0.72 },
+    person_clothing: { x: 0.32, y: 0.38, width: 0.36, height: 0.34 },
+    subject: { x: 0.28, y: 0.22, width: 0.44, height: 0.56 }
+  };
+
+  return boxes[regionType] || boxes.subject;
+}
+
+function getAspectRatioDimensionsFromVersion(version) {
+  const sizeText = String(version?.params?.size || "");
+  const sizeMatch = sizeText.match(/(\d{2,5})x(\d{2,5})/u);
+
+  if (sizeMatch) {
+    return {
+      width: Number(sizeMatch[1]),
+      height: Number(sizeMatch[2])
+    };
+  }
+
+  const aspectRatioText = String(version?.params?.aspectRatio || "1:1");
+  const ratioMatch = aspectRatioText.match(/(\d{1,3})\s*:\s*(\d{1,3})/u);
+
+  if (ratioMatch) {
+    const widthRatio = Number(ratioMatch[1]);
+    const heightRatio = Number(ratioMatch[2]);
+    const longEdge = 1024;
+
+    if (widthRatio >= heightRatio) {
+      return {
+        width: longEdge,
+        height: Math.round(longEdge * heightRatio / widthRatio)
+      };
+    }
+
+    return {
+      width: Math.round(longEdge * widthRatio / heightRatio),
+      height: longEdge
+    };
+  }
+
+  return { width: 1024, height: 1024 };
+}
+
+function resolveOutputImagePath(imageUrl = "") {
+  const fileName = basename(String(imageUrl).split("?")[0]);
+  const filePath = resolve(outputsDir, fileName);
+  const relativePath = relative(outputsDir, filePath);
+
+  if (relativePath.startsWith("..") || relativePath.startsWith("/") || relativePath.startsWith("\\")) {
+    return undefined;
+  }
+
+  return filePath;
+}
+
+async function getVersionImageDataHref(version) {
+  const imagePath = resolveOutputImagePath(version?.imagePath);
+
+  if (!imagePath) {
+    return "";
+  }
+
+  try {
+    const imageBuffer = await readFile(imagePath);
+    const imageExtension = extname(imagePath).toLowerCase();
+    const contentType = mimeTypes[imageExtension] || "image/png";
+    return `data:${contentType};base64,${imageBuffer.toString("base64")}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildEditPrompt(command, sourceVersion) {
+  return [
+    sourceVersion?.prompt || sourceVersion?.systemUnderstanding || sourceVersion?.userSpeechText || "",
+    `局部重绘区域：${command.inpaintRegion?.label || command.targetObject || "主体区域"}`,
+    `修改要求：${command.instruction}`,
+    command.mustKeep?.length ? `必须保留：${command.mustKeep.join("、")}` : "",
+    "Keep the unchanged area consistent with the source image."
+  ].filter(Boolean).join("\n");
+}
+
+async function buildLocalEditPreviewSvg({ sourceVersion, command }) {
+  const dimensions = getAspectRatioDimensionsFromVersion(sourceVersion);
+  const region = command.inpaintRegion || {};
+  const box = getRegionBox(region.type);
+  const sourceDataHref = await getVersionImageDataHref(sourceVersion);
+  const label = escapeSvgText(region.label || command.targetObject || "局部区域");
+  const instruction = escapeSvgText(command.instruction || "");
+  const rectX = Math.round(dimensions.width * box.x);
+  const rectY = Math.round(dimensions.height * box.y);
+  const rectWidth = Math.round(dimensions.width * box.width);
+  const rectHeight = Math.round(dimensions.height * box.height);
+  const imageLayer = sourceDataHref
+    ? `<image href="${sourceDataHref}" x="0" y="0" width="${dimensions.width}" height="${dimensions.height}" preserveAspectRatio="xMidYMid slice"/>`
+    : `<rect width="100%" height="100%" fill="#12243a"/>`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.width}" height="${dimensions.height}" viewBox="0 0 ${dimensions.width} ${dimensions.height}">
+  <defs>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#06101c" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  ${imageLayer}
+  <rect width="100%" height="100%" fill="#06101c" opacity="0.18"/>
+  <rect x="${rectX}" y="${rectY}" width="${rectWidth}" height="${rectHeight}" rx="20" fill="#4f9dff" opacity="0.2"/>
+  <rect x="${rectX}" y="${rectY}" width="${rectWidth}" height="${rectHeight}" rx="20" fill="none" stroke="#4f9dff" stroke-width="10" stroke-dasharray="28 18" filter="url(#softShadow)"/>
+  <rect x="${Math.round(dimensions.width * 0.06)}" y="${Math.round(dimensions.height * 0.07)}" width="${Math.round(dimensions.width * 0.5)}" height="112" rx="18" fill="#06101c" opacity="0.74"/>
+  <text x="${Math.round(dimensions.width * 0.08)}" y="${Math.round(dimensions.height * 0.07) + 40}" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="28" fill="#8de8ff" font-weight="800">LOCAL INPAINT PREVIEW</text>
+  <text x="${Math.round(dimensions.width * 0.08)}" y="${Math.round(dimensions.height * 0.07) + 82}" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="34" fill="#ffffff" font-weight="800">${label}</text>
+  <text x="${Math.round(dimensions.width * 0.08)}" y="${Math.round(dimensions.height * 0.92)}" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="30" fill="#ffffff" font-weight="700">${instruction}</text>
+</svg>`;
+}
+
+async function saveLocalEditPreviewImage({ sourceVersion, command }) {
+  const versionId = await allocateVersionId();
+  const fileName = `version-${versionId}.svg`;
+  const imagePath = resolve(outputsDir, fileName);
+
+  await mkdir(outputsDir, { recursive: true });
+  await writeFile(imagePath, await buildLocalEditPreviewSvg({ sourceVersion, command }), "utf8");
+
+  return {
+    versionId,
+    imageUrl: `/outputs/${fileName}`
+  };
+}
+
 function getHordeDimensions(aspectRatio) {
   const dimensions = {
     "16:9": { width: 576, height: 320 },
@@ -2227,6 +2363,81 @@ async function handleGenerateImage(request, response) {
   });
 }
 
+async function handleEditImage(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const payload = await readJsonBody(request);
+  const command = payload.command || payload;
+  const targetVersionId = Number(command.targetVersionId || payload.targetVersionId);
+
+  if (!Number.isFinite(targetVersionId)) {
+    sendJson(response, 400, { error: "Target version is required" });
+    return;
+  }
+
+  const versions = await readVersionRecords();
+  const sourceVersion = getVersionById(versions, targetVersionId);
+
+  if (!sourceVersion) {
+    sendJson(response, 404, { error: "没有找到要局部重绘的版本" });
+    return;
+  }
+
+  const normalizedCommand = {
+    intent: "edit",
+    targetVersionId,
+    editType: command.editType || "local_redraw",
+    targetObject: command.targetObject || command.inpaintRegion?.label || "主体区域",
+    instruction: String(command.instruction || "").trim(),
+    mustKeep: Array.isArray(command.mustKeep) ? command.mustKeep : [],
+    inpaintRegion: command.inpaintRegion || {
+      type: "subject",
+      label: command.targetObject || "主体区域"
+    }
+  };
+
+  if (!normalizedCommand.instruction) {
+    sendJson(response, 400, { error: "Edit instruction is required" });
+    return;
+  }
+
+  const startedAt = Date.now();
+  const prompt = buildEditPrompt(normalizedCommand, sourceVersion);
+  const savedImage = await saveLocalEditPreviewImage({
+    sourceVersion,
+    command: normalizedCommand
+  });
+
+  const version = await appendVersionRecord({
+    id: savedImage.versionId,
+    type: "edit",
+    parentVersionId: sourceVersion.id,
+    userSpeechText: normalizedCommand.instruction,
+    systemUnderstanding: `局部重绘${normalizedCommand.inpaintRegion.label}：${normalizedCommand.instruction}`,
+    prompt,
+    imagePath: savedImage.imageUrl,
+    params: {
+      provider: payload.provider || "local-preview",
+      editType: normalizedCommand.editType,
+      targetObject: normalizedCommand.targetObject,
+      inpaintRegion: normalizedCommand.inpaintRegion,
+      sourceVersionId: sourceVersion.id
+    },
+    source: "local-preview",
+    createdAt: new Date().toISOString()
+  });
+
+  sendJson(response, 200, {
+    ok: true,
+    version,
+    versions: await readVersionRecords(),
+    elapsedMs: Date.now() - startedAt
+  });
+}
+
 async function serveOutput(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const outputPath = decodeURIComponent(requestUrl.pathname.replace(/^\/outputs\/+/, ""));
@@ -2300,6 +2511,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/generate-image")) {
       await handleGenerateImage(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/edit-image")) {
+      await handleEditImage(request, response);
       return;
     }
 
