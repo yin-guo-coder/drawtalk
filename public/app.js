@@ -1,3 +1,6 @@
+const introScreen = document.querySelector("#intro-screen");
+const introStartButton = document.querySelector("#intro-start-button");
+const appShell = document.querySelector("#app-shell");
 const micButton = document.querySelector("#mic-button");
 const statusChip = document.querySelector("#status-chip");
 const voiceTitle = document.querySelector("#voice-title");
@@ -434,6 +437,24 @@ function setStatus(state, message) {
   voiceStatus.textContent = message || nextStatus.message;
 }
 
+function enterWorkbench() {
+  if (introScreen) {
+    introScreen.hidden = true;
+  }
+
+  if (appShell) {
+    appShell.classList.remove("is-entering");
+    appShell.hidden = false;
+    void appShell.offsetWidth;
+    appShell.classList.add("is-entering");
+    window.setTimeout(() => {
+      appShell.classList.remove("is-entering");
+    }, 260);
+  }
+
+  micButton.focus({ preventScroll: true });
+}
+
 function showTranscript(text) {
   const trimmed = text.trim();
   transcriptPreview.textContent = trimmed ? `“${trimmed}”` : "暂无语音文本";
@@ -652,6 +673,14 @@ clearSpeechInsights();
 renderVersions();
 refreshSpeechVoices();
 
+if (introStartButton) {
+  introStartButton.addEventListener("click", enterWorkbench);
+}
+
+if (!introScreen && appShell) {
+  appShell.hidden = false;
+}
+
 if (window.speechSynthesis?.addEventListener) {
   window.speechSynthesis.addEventListener("voiceschanged", refreshSpeechVoices);
 }
@@ -659,6 +688,7 @@ if (window.speechSynthesis?.addEventListener) {
 void loadVersions();
 
 window.drawtalkUi = {
+  enterWorkbench,
   setStatus,
   showTranscript,
   speakAssistantReply,

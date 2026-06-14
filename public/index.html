@@ -7,7 +7,15 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="app-shell">
+    <section class="intro-screen" id="intro-screen" aria-labelledby="intro-title">
+      <div class="intro-content">
+        <h1 class="intro-brand" id="intro-title">drawtalk</h1>
+        <p class="intro-tagline">您的个性化语音绘图工具</p>
+        <button class="intro-start-button" id="intro-start-button" type="button">开始使用</button>
+      </div>
+    </section>
+
+    <main class="app-shell" id="app-shell" hidden>
       <section class="workbench" aria-labelledby="app-title">
         <header class="topbar">
           <div>
