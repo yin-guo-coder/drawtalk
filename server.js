@@ -1130,7 +1130,228 @@ function buildCommandPrompt(command) {
   ].filter(Boolean).join("，");
 }
 
-function buildGenerateCommand(text, previousCommand) {
+function normalizeSpeakerField(value) {
+  return String(value || "").trim();
+}
+
+function getPersonalizedAgeGroup(speaker = {}) {
+  const ageText = normalizeSpeakerField(speaker.age || speaker.ageGroup || speaker.speakerAge);
+  const lowerAge = ageText.toLowerCase();
+
+  if (/child|kid|children|儿童|小孩/u.test(lowerAge)) {
+    return "child";
+  }
+
+  if (/teen|adolescent|少年|青少年/u.test(lowerAge)) {
+    return "teen";
+  }
+
+  if (/middle|中年/u.test(lowerAge)) {
+    return "middle";
+  }
+
+  if (/senior|elder|old|老年/u.test(lowerAge)) {
+    return "senior";
+  }
+
+  const ageMatch = ageText.match(/(\d{1,3})/u);
+
+  if (!ageMatch) {
+    return "unknown";
+  }
+
+  const age = Number(ageMatch[1]);
+
+  if (age <= 12) {
+    return "child";
+  }
+
+  if (age <= 17) {
+    return "teen";
+  }
+
+  if (age <= 35) {
+    return "young";
+  }
+
+  if (age <= 59) {
+    return "middle";
+  }
+
+  return "senior";
+}
+
+function getPersonalizedGenderGroup(speaker = {}) {
+  const genderText = normalizeSpeakerField(speaker.gender || speaker.speakerGender).toLowerCase();
+
+  if (/female|woman|girl|女性|女生|女/u.test(genderText)) {
+    return "female";
+  }
+
+  if (/(^|[^a-z])male([^a-z]|$)|man|boy|男性|男生|男/u.test(genderText)) {
+    return "male";
+  }
+
+  return "unknown";
+}
+
+function getPersonalizedEmotionGroup(speaker = {}) {
+  const emotionText = normalizeSpeakerField(speaker.emotion || speaker.speechEmotion).toLowerCase();
+
+  if (!emotionText || /unknown|expression dimensions|未识别|不确定/u.test(emotionText)) {
+    return "unknown";
+  }
+
+  if (/happy|joy|excited|positive|开心|高兴|愉快/u.test(emotionText)) {
+    return "happy";
+  }
+
+  if (/calm|neutral|平静|正常|自然/u.test(emotionText)) {
+    return "calm";
+  }
+
+  if (/anxious|nervous|urgent|焦急|着急|紧张/u.test(emotionText)) {
+    return "anxious";
+  }
+
+  if (/sad|sadness|frustrated|upset|depress|沮丧|难过|失落/u.test(emotionText)) {
+    return "sad";
+  }
+
+  if (/angry|anger|irritated|mad|生气|愤怒|烦躁/u.test(emotionText)) {
+    return "angry";
+  }
+
+  if (/tired|fatigue|sleepy|疲惫|疲劳|困/u.test(emotionText)) {
+    return "tired";
+  }
+
+  return "unknown";
+}
+
+function stripLeadingTone(text) {
+  return String(text || "").replace(/^(好的|已收到需求|已收到|太好了|别急|没关系|我明白你的意思)[，,。]*/u, "");
+}
+
+function applyEmotionTone(text, speaker) {
+  const coreText = stripLeadingTone(text);
+
+  switch (getPersonalizedEmotionGroup(speaker)) {
+    case "happy":
+      return `太好了，${coreText}`;
+    case "anxious":
+      return `别急，${coreText}`;
+    case "sad":
+      return `没关系，${coreText}`;
+    case "angry":
+      return `我明白你的意思，${coreText}`;
+    case "tired":
+      return `好的，${coreText}`;
+    default:
+      return text;
+  }
+}
+
+function getPersonalizedOpening(speaker, mode = "generate") {
+  const ageGroup = getPersonalizedAgeGroup(speaker);
+  const genderGroup = getPersonalizedGenderGroup(speaker);
+  const openings = {
+    generate: {
+      child: {
+        male: "小画家，我先帮你把颜色和细节整理清楚。",
+        female: "小画家，我先帮你把画面整理得更可爱。",
+        unknown: "小画家，别着急，我先确认一下你想画的内容。"
+      },
+      teen: {
+        male: "少年画师，我先帮你把画面细节整理好。",
+        female: "少年创作者，我先帮你把画面调得更好看。",
+        unknown: "少年创作者，我先帮你优化一下画面细节。"
+      },
+      young: {
+        male: "好的，我会尽量保留你的创意并整理画面效果。",
+        female: "好的，我会帮你把风格和细节整理得更完整。",
+        unknown: "好的，我会根据你的描述整理画面。"
+      },
+      middle: {
+        male: "已收到需求，我会重点确认画面清晰、稳定、符合你的描述。",
+        female: "已收到需求，我会帮你把画面描述整理得更自然、完整。",
+        unknown: "已收到需求，我正在整理画面细节。"
+      },
+      senior: {
+        male: "好的，我先为您确认图片需求，稍后会为您说明画面内容。",
+        female: "好的，我先为您确认图片需求，稍后会帮您描述生成结果。",
+        unknown: "好的，我先确认图片需求，稍后会用语音为您说明结果。"
+      },
+      unknown: {
+        unknown: "已收到，我正在根据你的描述整理画面。"
+      }
+    },
+    revision: {
+      unknown: {
+        unknown: "已收到，我会按新的描述重新整理画面。"
+      }
+    },
+    generating: {
+      child: {
+        male: "小画家，图片马上就画好啦，我正在帮你把颜色和细节变得更漂亮。",
+        female: "小画家，图片马上就画好啦，我正在帮你把画面变得更可爱。",
+        unknown: "小画家，别着急，图片马上就准备好啦。"
+      },
+      teen: {
+        male: "少年画师，图片马上就弄好了，别急，我正在帮你处理细节。",
+        female: "少年创作者，图片马上就完成啦，我正在帮你把画面调得更好看。",
+        unknown: "少年创作者，图片马上生成完成，我正在优化最后的细节。"
+      },
+      young: {
+        male: "好的，图片正在生成中，我会尽量保留你的创意并优化画面效果。",
+        female: "好的，图片正在生成中，我会帮你把风格和细节处理得更完整。",
+        unknown: "好的，图片正在生成中，我会根据你的描述优化画面。"
+      },
+      middle: {
+        male: "已收到需求，图片正在生成中，我会重点保证画面清晰、稳定、符合你的描述。",
+        female: "已收到需求，图片正在生成中，我会帮你把画面调整得更自然、完整。",
+        unknown: "已收到需求，图片正在生成中，请稍等，我正在处理画面细节。"
+      },
+      senior: {
+        male: "好的，我正在为您生成图片，请稍等一下，完成后我会为您说明画面内容。",
+        female: "好的，我正在为您生成图片，请稍等一下，完成后我会帮您描述生成结果。",
+        unknown: "好的，图片正在生成中，请稍等，我会用语音为您说明结果。"
+      },
+      unknown: {
+        unknown: "已确认，开始生成图片。"
+      }
+    },
+    reject: {
+      unknown: {
+        unknown: "好的，已取消。请重新说出你想生成的画面。"
+      }
+    }
+  };
+  const modeOpenings = openings[mode] || openings.generate;
+  const ageOpenings = modeOpenings[ageGroup] || modeOpenings.unknown || openings.generate.unknown;
+  const opening = ageOpenings[genderGroup] || ageOpenings.unknown || openings.generate.unknown.unknown;
+
+  return applyEmotionTone(opening, speaker);
+}
+
+function buildGenerateReply(command, speaker) {
+  const avoidText = command.mustAvoid.length ? `避免${command.mustAvoid.join("、")}。` : "";
+  return `${getPersonalizedOpening(speaker, "generate")}我理解为：生成一张${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。${avoidText}是否确认？`;
+}
+
+function buildRevisedReply(command, speaker) {
+  return `${getPersonalizedOpening(speaker, "revision")}我已改成：${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。是否确认？`;
+}
+
+function buildConfirmReply(speaker) {
+  return getPersonalizedOpening(speaker, "generating");
+}
+
+function buildRejectReply(speaker) {
+  return getPersonalizedOpening(speaker, "reject");
+}
+
+function buildGenerateCommand(text, previousCommand, speaker) {
   const aspectRatio = parseAspectRatio(text);
   const command = {
     intent: "generate",
@@ -1143,22 +1364,22 @@ function buildGenerateCommand(text, previousCommand) {
   };
 
   command.prompt = buildCommandPrompt(command);
-  command.replyToUser = `我理解为：生成一张${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。${command.mustAvoid.length ? `避免${command.mustAvoid.join("、")}。` : ""}是否确认？`;
+  command.replyToUser = buildGenerateReply(command, speaker);
   return command;
 }
 
-function buildRevisedCommand(text, previousCommand) {
+function buildRevisedCommand(text, previousCommand, speaker) {
   const revision = text.replace(/^(改成|换成|调整为|改为|变成|不对，?|不是，?)/u, "").trim();
   const baseText = [previousCommand?.subject, revision].filter(Boolean).join("，");
-  const command = buildGenerateCommand(baseText || text, previousCommand);
+  const command = buildGenerateCommand(baseText || text, previousCommand, speaker);
 
   command.intent = "generate";
   command.userRevision = text;
-  command.replyToUser = `我已改成：${command.subject}，风格是${command.style}，画幅为${command.aspectRatio}。是否确认？`;
+  command.replyToUser = buildRevisedReply(command, speaker);
   return command;
 }
 
-function parseCommand(text, previousCommand) {
+function parseCommand(text, previousCommand, speaker = {}) {
   const normalizedText = String(text || "").trim();
 
   if (!normalizedText) {
@@ -1171,7 +1392,7 @@ function parseCommand(text, previousCommand) {
     return {
       intent: "confirm",
       needConfirmation: false,
-      replyToUser: previousCommand ? "已确认，开始生成图片。" : "还没有待确认的需求，请先说出想生成的画面。"
+      replyToUser: previousCommand ? buildConfirmReply(speaker) : "还没有待确认的需求，请先说出想生成的画面。"
     };
   }
 
@@ -1179,15 +1400,15 @@ function parseCommand(text, previousCommand) {
     return {
       intent: "reject",
       needConfirmation: false,
-      replyToUser: "好的，已取消。请重新说出你想生成的画面。"
+      replyToUser: buildRejectReply(speaker)
     };
   }
 
   if (previousCommand && includesAny(normalizedText, ["改成", "换成", "调整为", "改为", "变成"])) {
-    return buildRevisedCommand(normalizedText, previousCommand);
+    return buildRevisedCommand(normalizedText, previousCommand, speaker);
   }
 
-  return buildGenerateCommand(normalizedText, previousCommand);
+  return buildGenerateCommand(normalizedText, previousCommand, speaker);
 }
 
 async function handleCommand(request, response) {
@@ -1198,7 +1419,7 @@ async function handleCommand(request, response) {
 
   const payload = await readJsonBody(request);
   const commandText = normalizeTranscriptForImagePrompt(payload.text);
-  const command = parseCommand(commandText, payload.previousCommand);
+  const command = parseCommand(commandText, payload.previousCommand, payload.speaker);
 
   sendJson(response, 200, {
     ok: true,

@@ -64,6 +64,7 @@ let passiveSpeechInterimText = "";
 let versions = [];
 let isGenerating = false;
 let pendingCommand = null;
+let latestSpeakerProfile = {};
 
 function getVersionSourceLabel(source) {
   if (source === "openai") {
@@ -133,6 +134,16 @@ function showSpeechInsights(payload) {
   speechGender.textContent = gender || "--";
   speechAge.textContent = age || "--";
   speechEmotion.textContent = emotion || "--";
+}
+
+function getSpeakerProfile(payload = {}) {
+  const speaker = payload.speaker || {};
+
+  return {
+    gender: payload.gender || speaker.gender || "",
+    age: payload.age || speaker.age || "",
+    emotion: payload.emotion || speaker.emotion || ""
+  };
 }
 
 function showDialogue(userText, assistantText) {
@@ -412,7 +423,7 @@ async function generateImageFromPrompt(prompt) {
   }
 }
 
-async function parseVoiceCommand(text) {
+async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
   const response = await fetch("/api/command", {
     method: "POST",
     headers: {
@@ -420,7 +431,8 @@ async function parseVoiceCommand(text) {
     },
     body: JSON.stringify({
       text,
-      previousCommand: pendingCommand
+      previousCommand: pendingCommand,
+      speaker: speakerProfile
     })
   });
   const payload = await response.json().catch(() => ({}));
@@ -432,7 +444,7 @@ async function parseVoiceCommand(text) {
   return payload.command;
 }
 
-async function handleRecognizedText(transcript) {
+async function handleRecognizedText(transcript, speakerProfile = latestSpeakerProfile) {
   const trimmedTranscript = transcript.trim();
 
   if (!trimmedTranscript) {
@@ -444,7 +456,7 @@ async function handleRecognizedText(transcript) {
   setStatus("thinking", "正在理解你的需求");
 
   try {
-    const command = await parseVoiceCommand(trimmedTranscript);
+    const command = await parseVoiceCommand(trimmedTranscript, speakerProfile);
     showDialogue(trimmedTranscript, command.replyToUser);
 
     if (command.intent === "confirm") {
@@ -641,19 +653,22 @@ async function uploadRecording() {
     }
 
     const transcript = payload.text || "";
+    latestSpeakerProfile = getSpeakerProfile(payload);
     showSpeechInsights(payload);
-    void handleRecognizedText(transcript);
+    void handleRecognizedText(transcript, latestSpeakerProfile);
   } catch (error) {
     await waitForPassiveSpeechFallback();
     const fallbackTranscript = getPassiveSpeechTranscript();
 
     if (fallbackTranscript) {
+      latestSpeakerProfile = {};
       clearSpeechInsights();
       setStatus("thinking", "ASR 服务不可用，已使用浏览器识别结果");
       void handleRecognizedText(fallbackTranscript);
       return;
     }
 
+    latestSpeakerProfile = {};
     clearSpeechInsights();
     setStatus("error", error.message || "语音转写失败");
   }
