@@ -1861,12 +1861,22 @@ function getHordeHeaders() {
 }
 
 function getHordeModel() {
-  return process.env.HORDE_IMAGE_MODEL || "AbsoluteReality";
+  return String(process.env.HORDE_IMAGE_MODEL || "auto").trim();
+}
+
+function getHordeModels() {
+  const model = getHordeModel();
+
+  if (!model || ["auto", "any", "default", "random"].includes(model.toLowerCase())) {
+    return [];
+  }
+
+  return model.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 async function generateImageWithHorde({ prompt, aspectRatio }) {
   const dimensions = getHordeDimensions(aspectRatio);
-  const model = getHordeModel();
+  const models = getHordeModels();
   const requestBody = {
     prompt,
     params: {
@@ -1879,9 +1889,12 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
     nsfw: false,
     trusted_workers: false,
     censor_nsfw: true,
-    r2: false,
-    models: [model]
+    r2: false
   };
+
+  if (models.length > 0) {
+    requestBody.models = models;
+  }
 
   const createResponse = await postJson(
     "https://aihorde.net/api/v2/generate/async",
@@ -1944,7 +1957,7 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
 
       return {
         imageBase64,
-        model: generation.model || model,
+        model: generation.model || models[0] || "AI Horde auto",
         dimensions,
         generationId
       };
@@ -2013,6 +2026,18 @@ function normalizeImageProvider(provider) {
   return "";
 }
 
+function shouldUseLocalPreviewFallback(provider, error) {
+  if (provider === "openai") {
+    return error.statusCode === 503;
+  }
+
+  if (provider === "horde") {
+    return error.statusCode === 504 || process.env.HORDE_FALLBACK_ON_ERROR === "true";
+  }
+
+  return false;
+}
+
 async function handleGenerateImage(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { error: "Method not allowed" });
@@ -2072,11 +2097,13 @@ async function handleGenerateImage(request, response) {
       throw error;
     }
   } catch (error) {
-    if (error.statusCode !== 503) {
+    if (!shouldUseLocalPreviewFallback(provider, error)) {
       throw error;
     }
 
     source = "local-preview";
+    params.fallbackFrom = provider;
+    params.fallbackReason = error.message || "Image provider failed";
     savedImage = await saveLocalPreviewImage({
       prompt: userPrompt,
       aspectRatio
