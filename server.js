@@ -1626,10 +1626,99 @@ function buildRevisedCommand(text, previousCommand, speaker) {
   return command;
 }
 
+const editActionKeywords = [
+  "更换",
+  "更改",
+  "替换",
+  "换",
+  "换成",
+  "换为",
+  "换掉",
+  "改",
+  "改成",
+  "改为",
+  "改换",
+  "改掉",
+  "改一下",
+  "修改成",
+  "修改为",
+  "修改一下",
+  "调",
+  "调整为",
+  "调整成",
+  "调成",
+  "变成",
+  "变为",
+  "重绘",
+  "重画",
+  "局部重绘",
+  "局部修改",
+  "删除",
+  "删掉",
+  "去掉",
+  "去除",
+  "移除",
+  "擦掉",
+  "不要"
+];
+
+const editTargetKeywords = [
+  "背景",
+  "底色",
+  "环境",
+  "天空",
+  "地面",
+  "左边",
+  "左侧",
+  "右边",
+  "右侧",
+  "上方",
+  "顶部",
+  "下面",
+  "下方",
+  "底部",
+  "衣服",
+  "上衣",
+  "裙子",
+  "裤子",
+  "服装",
+  "人物",
+  "人像",
+  "角色",
+  "脸",
+  "头发",
+  "主体",
+  "物体"
+];
+
+function compactCommandText(text) {
+  return String(text || "").replace(/[\s，。！？、,.!?；;：:]/gu, "");
+}
+
+function extractExplicitEditTarget(text) {
+  const compactText = compactCommandText(text);
+  const targetPatterns = [
+    /(?:把|将|给|让)?(?:当前图片|这张图|图片|画面|画面里|图里|里面|其中的)?(.+?)(?:更换为|更换成|更改为|更改成|替换为|替换成|换成|换为|换掉|改成|改为|改换为|改换成|修改成|修改为|调整为|调整成|调成|变成|变为)/u,
+    /(?:把|将|给|让)?(?:当前图片|这张图|图片|画面|画面里|图里|里面|其中的)?(.+?)(?:删除|删掉|去掉|去除|移除|擦掉|不要)/u,
+    /(?:更换|替换|改换|更改|修改|调整|重绘|重画|换|改)(.+?)(?:为|成|到)/u,
+    /(?:删除|删掉|去掉|去除|移除|擦掉|不要)(.+)$/u
+  ];
+
+  for (const pattern of targetPatterns) {
+    const match = compactText.match(pattern);
+    const target = match?.[1]?.trim();
+
+    if (target) {
+      return target.replace(/^(这个|那个|当前|图片的|画面的|图里的|里面的|其中的)/u, "");
+    }
+  }
+
+  return "";
+}
+
 function inferEditTarget(text) {
   const normalizedText = String(text || "").trim();
-  const explicitTargetMatch = normalizedText.match(/把(.+?)(?:换成|改成|调整为|改为|变成|删除|删掉|去掉)/u);
-  const explicitTarget = explicitTargetMatch?.[1]?.trim();
+  const explicitTarget = extractExplicitEditTarget(normalizedText);
 
   if (/背景|底色|环境/u.test(normalizedText)) {
     return { targetObject: "背景", regionType: "background", regionLabel: "背景" };
@@ -1717,7 +1806,13 @@ function looksLikeEditCommand(text, currentVersionId) {
     return false;
   }
 
-  return includesAny(text, ["把", "改", "换", "删除", "删掉", "去掉", "移除", "不要", "变成", "调整"]);
+  const compactText = compactCommandText(text);
+  const hasEditAction = includesAny(compactText, editActionKeywords);
+  const hasEditTarget = includesAny(compactText, editTargetKeywords);
+  const hasExplicitChangePattern = /(?:把|将|给|让).+?(?:更换为|更换成|更改为|更改成|替换为|替换成|换成|换为|改成|改为|改换为|改换成|修改成|修改为|调整为|调整成|变成|变为)/u.test(compactText);
+  const hasActionFirstChangePattern = /(?:更换|替换|改换|更改|修改|调整|重绘|重画|换|改).+?(?:为|成|到)/u.test(compactText);
+
+  return hasExplicitChangePattern || hasActionFirstChangePattern || (hasEditAction && hasEditTarget);
 }
 
 function parseCommand(text, previousCommand, speaker = {}, currentVersionId) {
