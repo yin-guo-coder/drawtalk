@@ -43,16 +43,6 @@
               <path d="M8 21h8"></path>
             </svg>
           </button>
-          <section class="inpaint-panel" aria-labelledby="inpaint-title">
-            <div>
-              <p class="eyebrow">Local Edit</p>
-              <h2 id="inpaint-title">局部重绘</h2>
-            </div>
-            <div class="inpaint-actions" aria-label="局部重绘操作">
-              <button class="inpaint-action" type="button" disabled>选择区域</button>
-              <button class="inpaint-action" type="button" disabled>重绘</button>
-            </div>
-          </section>
           <div class="voice-copy">
             <p class="voice-title" id="voice-title">按住说话</p>
             <p class="voice-status" id="voice-status">说出你想画的画面</p>
@@ -64,6 +54,13 @@
               </select>
             </label>
           </div>
+          <section class="inpaint-panel" aria-labelledby="inpaint-title">
+            <div>
+              <p class="eyebrow">Local Edit</p>
+              <h2 id="inpaint-title">局部重绘</h2>
+            </div>
+            <div class="inpaint-placeholder" aria-hidden="true"></div>
+          </section>
         </section>
       </section>
 
