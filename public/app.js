@@ -223,14 +223,36 @@ function renderVersions(versions = []) {
   }
 }
 
+async function loadVersions() {
+  try {
+    const response = await fetch("/api/versions");
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.error || "版本列表加载失败");
+    }
+
+    versions = Array.isArray(payload.versions) ? payload.versions : [];
+    renderVersions(versions);
+
+    if (versions[0]) {
+      showGeneratedImage(versions[0]);
+    }
+  } catch (error) {
+    setStatus("error", error.message || "版本列表加载失败");
+  }
+}
+
 setStatus("idle");
 showTranscript("");
 clearSpeechInsights();
 renderVersions();
+void loadVersions();
 
 window.drawtalkUi = {
   setStatus,
   showTranscript,
+  loadVersions,
   renderVersions
 };
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = resolve(__dirname, "public");
 const outputsDir = resolve(__dirname, "outputs");
+const versionsFile = resolve(outputsDir, "versions.json");
 const port = Number(process.env.PORT || 3000);
 const maxAudioBytes = 25 * 1024 * 1024;
 const maxJsonBytes = 1024 * 1024;
@@ -288,6 +289,64 @@ async function readJsonBody(request) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+async function readVersionRecords() {
+  try {
+    const content = await readFile(versionsFile, "utf8");
+    const parsed = JSON.parse(content);
+    const versions = Array.isArray(parsed) ? parsed : parsed.versions;
+
+    return Array.isArray(versions) ? versions.filter((version) => version && typeof version === "object") : [];
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function writeVersionRecords(versions) {
+  await mkdir(outputsDir, { recursive: true });
+  await writeFile(versionsFile, `${JSON.stringify(versions, null, 2)}\n`, "utf8");
+}
+
+async function allocateVersionId() {
+  const versions = await readVersionRecords();
+  const largestPersistedId = versions.reduce((largestId, version) => {
+    const id = Number(version.id);
+    return Number.isFinite(id) && id > largestId ? id : largestId;
+  }, 0);
+
+  nextVersionId = Math.max(nextVersionId, largestPersistedId + 1);
+
+  const versionId = nextVersionId;
+  nextVersionId += 1;
+  return versionId;
+}
+
+async function appendVersionRecord(version) {
+  const versions = await readVersionRecords();
+  const nextVersions = [
+    version,
+    ...versions.filter((savedVersion) => Number(savedVersion.id) !== Number(version.id))
+  ];
+
+  await writeVersionRecords(nextVersions);
+  return version;
+}
+
+async function handleVersions(request, response) {
+  if (request.method !== "GET") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  sendJson(response, 200, {
+    ok: true,
+    versions: await readVersionRecords()
+  });
 }
 
 function getAudioExtension(contentType) {
@@ -1562,8 +1621,7 @@ function detectImageExtension(imageBuffer) {
 }
 
 async function saveGeneratedImage({ imageBase64, extension }) {
-  const versionId = nextVersionId;
-  nextVersionId += 1;
+  const versionId = await allocateVersionId();
   const imageBuffer = Buffer.from(imageBase64, "base64");
   const imageExtension = extension || detectImageExtension(imageBuffer);
   const fileName = `version-${versionId}.${imageExtension}`;
@@ -1579,8 +1637,7 @@ async function saveGeneratedImage({ imageBase64, extension }) {
 }
 
 async function saveLocalPreviewImage({ prompt, aspectRatio }) {
-  const versionId = nextVersionId;
-  nextVersionId += 1;
+  const versionId = await allocateVersionId();
   const fileName = `version-${versionId}.svg`;
   const imagePath = resolve(outputsDir, fileName);
 
@@ -1845,19 +1902,21 @@ async function handleGenerateImage(request, response) {
     });
   }
 
+  const version = await appendVersionRecord({
+    id: savedImage.versionId,
+    type: "generate",
+    userSpeechText: userPrompt,
+    systemUnderstanding: userPrompt,
+    prompt: generationPrompt,
+    imagePath: savedImage.imageUrl,
+    params,
+    source,
+    createdAt: new Date().toISOString()
+  });
+
   sendJson(response, 200, {
     ok: true,
-    version: {
-      id: savedImage.versionId,
-      type: "generate",
-      userSpeechText: userPrompt,
-      systemUnderstanding: userPrompt,
-      prompt: generationPrompt,
-      imagePath: savedImage.imageUrl,
-      params,
-      source,
-      createdAt: new Date().toISOString()
-    },
+    version,
     elapsedMs: Date.now() - startedAt
   });
 }
@@ -1930,6 +1989,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/generate-image")) {
       await handleGenerateImage(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/versions")) {
+      await handleVersions(request, response);
       return;
     }
 
