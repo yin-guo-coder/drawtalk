@@ -65,6 +65,9 @@ let pendingCommand = null;
 let latestSpeakerProfile = {};
 let currentVersionId;
 let availableSpeechVoices = [];
+let activeAssistantUtterance;
+let speechRestartTimer;
+let speechPlaybackToken = 0;
 
 const assistantVoicePacks = {
   child: {
@@ -205,6 +208,29 @@ function normalizeVoiceField(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function clampSpeechValue(value, fallback, min, max) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(numericValue, min), max);
+}
+
+function isChineseSpeechVoice(voice) {
+  const lang = normalizeVoiceField(voice.lang);
+  const name = normalizeVoiceField(voice.name);
+
+  return (
+    lang.startsWith("zh") ||
+    name.includes("chinese") ||
+    name.includes("mandarin") ||
+    name.includes("\u4e2d\u6587") ||
+    name.includes("\u666e\u901a\u8bdd")
+  );
+}
+
 function getVoiceAgeGroup(speaker = {}) {
   const ageText = normalizeVoiceField(speaker.age);
   const combinedText = `${ageText} ${normalizeVoiceField(speaker.gender)}`;
@@ -274,28 +300,23 @@ function getAssistantVoicePack(speaker = {}) {
   return agePacks[genderGroup] || agePacks.unknown || assistantVoicePacks.unknown.unknown;
 }
 
-function chooseSpeechVoice(voicePack) {
+function chooseSpeechVoice(voicePack = {}) {
   refreshSpeechVoices();
 
   const voices = availableSpeechVoices;
-  const chineseVoices = voices.filter((voice) => {
-    const lang = normalizeVoiceField(voice.lang);
-    const name = normalizeVoiceField(voice.name);
-    return lang.startsWith("zh") || name.includes("chinese") || name.includes("mandarin") || name.includes("中文") || name.includes("普通话");
-  });
-  const candidates = chineseVoices.length ? chineseVoices : voices;
+  const chineseVoices = voices.filter(isChineseSpeechVoice);
   const preferredNames = voicePack.voiceNames || [];
 
   for (const preferredName of preferredNames) {
     const normalizedPreferredName = normalizeVoiceField(preferredName);
-    const voice = candidates.find((candidate) => normalizeVoiceField(candidate.name).includes(normalizedPreferredName));
+    const voice = chineseVoices.find((candidate) => normalizeVoiceField(candidate.name).includes(normalizedPreferredName));
 
     if (voice) {
       return voice;
     }
   }
 
-  return candidates[0];
+  return chineseVoices.find((voice) => voice.default) || chineseVoices[0];
 }
 
 function setStatus(state, message) {
@@ -360,27 +381,74 @@ function showDialogue(userText, assistantText) {
   }
 }
 
-function speakAssistantReply(text) {
-  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
-    return;
-  }
-
-  window.speechSynthesis.cancel();
-
-  const voicePack = getAssistantVoicePack(latestSpeakerProfile);
-  const voice = chooseSpeechVoice(voicePack);
+function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoice) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = voicePack.rate;
-  utterance.pitch = voicePack.pitch;
+  utterance.rate = clampSpeechValue(voicePack.rate, 1, 0.75, 1.25);
+  utterance.pitch = clampSpeechValue(voicePack.pitch, 1, 0.7, 1.4);
   utterance.volume = 1;
 
-  if (voice) {
+  if (voice && !retryWithoutVoice) {
     utterance.voice = voice;
     utterance.lang = voice.lang || "zh-CN";
   }
 
-  window.speechSynthesis.speak(utterance);
+  utterance.onend = () => {
+    if (speechPlaybackToken === token && activeAssistantUtterance === utterance) {
+      activeAssistantUtterance = undefined;
+    }
+  };
+
+  utterance.onerror = () => {
+    if (speechPlaybackToken !== token) {
+      return;
+    }
+
+    if (voice && !retryWithoutVoice) {
+      window.setTimeout(() => speakAssistantReply(text, { retryWithoutVoice: true }), 80);
+      return;
+    }
+
+    if (activeAssistantUtterance === utterance) {
+      activeAssistantUtterance = undefined;
+    }
+  };
+
+  return utterance;
+}
+
+function speakAssistantReply(text, options = {}) {
+  const speechText = String(text || "").trim();
+
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+    return;
+  }
+
+  if (!speechText) {
+    return;
+  }
+
+  window.clearTimeout(speechRestartTimer);
+  const token = (speechPlaybackToken += 1);
+  const voicePack = getAssistantVoicePack(latestSpeakerProfile);
+  const voice = options.retryWithoutVoice ? undefined : chooseSpeechVoice(voicePack);
+
+  window.speechSynthesis.cancel();
+
+  speechRestartTimer = window.setTimeout(() => {
+    if (speechPlaybackToken !== token) {
+      return;
+    }
+
+    const utterance = buildAssistantUtterance(speechText, voicePack, voice, token, Boolean(options.retryWithoutVoice));
+    activeAssistantUtterance = utterance;
+
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+
+    window.speechSynthesis.speak(utterance);
+  }, 80);
 }
 
 function showGeneratedImage(version) {
@@ -472,6 +540,7 @@ void loadVersions();
 window.drawtalkUi = {
   setStatus,
   showTranscript,
+  speakAssistantReply,
   getAssistantVoicePack,
   chooseSpeechVoice,
   loadVersions,
