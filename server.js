@@ -313,6 +313,11 @@ async function writeVersionRecords(versions) {
   await writeFile(versionsFile, `${JSON.stringify(versions, null, 2)}\n`, "utf8");
 }
 
+async function clearVersionRecords() {
+  nextVersionId = 1;
+  await writeVersionRecords([]);
+}
+
 async function allocateVersionId() {
   const versions = await readVersionRecords();
   const largestPersistedId = versions.reduce((largestId, version) => {
@@ -347,6 +352,19 @@ async function handleVersions(request, response) {
   sendJson(response, 200, {
     ok: true,
     versions: await readVersionRecords()
+  });
+}
+
+async function handleVersionReset(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  await clearVersionRecords();
+  sendJson(response, 200, {
+    ok: true,
+    versions: []
   });
 }
 
@@ -2741,6 +2759,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/edit-image")) {
       await handleEditImage(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/versions/reset")) {
+      await handleVersionReset(request, response);
       return;
     }
 

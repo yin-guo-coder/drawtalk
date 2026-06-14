@@ -619,6 +619,25 @@ function showGeneratedImage(version) {
   imageFrame.classList.add("has-generated-image");
 }
 
+function clearGeneratedImage() {
+  const image = imageFrame.querySelector(".generated-image");
+
+  if (image) {
+    image.remove();
+  }
+
+  currentVersionId = undefined;
+  emptyImage.hidden = false;
+  imageFrame.classList.remove("has-generated-image");
+}
+
+function clearCurrentSessionVersions() {
+  versions = [];
+  pendingCommand = null;
+  clearGeneratedImage();
+  renderVersions(versions);
+}
+
 function renderVersions(versions = []) {
   versionList.innerHTML = "";
 
@@ -677,6 +696,22 @@ async function loadVersions() {
   }
 }
 
+async function resetVersionsOnRefresh() {
+  clearCurrentSessionVersions();
+
+  try {
+    const response = await fetch("/api/versions/reset", {
+      method: "POST"
+    });
+
+    if (!response.ok) {
+      console.warn("Version reset endpoint is not available yet.");
+    }
+  } catch (error) {
+    console.warn("Version reset request failed.", error);
+  }
+}
+
 setStatus("idle");
 showTranscript("");
 clearSpeechInsights();
@@ -696,7 +731,7 @@ if (window.speechSynthesis?.addEventListener) {
   window.speechSynthesis.addEventListener("voiceschanged", refreshSpeechVoices);
 }
 
-void loadVersions();
+void resetVersionsOnRefresh();
 
 window.drawtalkUi = {
   enterWorkbench,
@@ -933,7 +968,7 @@ async function editImageFromCommand(command) {
     }
 
     const version = payload.version;
-    versions = Array.isArray(payload.versions) ? payload.versions : [version, ...versions];
+    versions = [version, ...versions.filter((savedVersion) => Number(savedVersion.id) !== Number(version.id))];
     showGeneratedImage(version);
     renderVersions(versions);
     showInpaintRegion(command.inpaintRegion);
@@ -1070,7 +1105,9 @@ async function restoreVersion(command, userText) {
   }
 
   const version = payload.version;
-  versions = Array.isArray(payload.versions) ? payload.versions : versions;
+  versions = versions.some((savedVersion) => Number(savedVersion.id) === Number(version.id))
+    ? versions
+    : [version, ...versions];
   showGeneratedImage(version);
   renderVersions(versions);
 
