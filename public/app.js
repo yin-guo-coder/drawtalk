@@ -912,7 +912,8 @@ async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
     body: JSON.stringify({
       text,
       previousCommand: pendingCommand,
-      speaker: speakerProfile
+      speaker: speakerProfile,
+      currentVersionId
     })
   });
   const payload = await response.json().catch(() => ({}));
@@ -1080,6 +1081,12 @@ async function handleRecognizedText(transcript, { audioBlob, speakerProfile = la
       }
 
       const commandToGenerate = pendingCommand;
+
+      if (commandToGenerate.intent === "edit") {
+        setStatus("error", "局部重绘接口正在接入，请稍后再确认。");
+        return;
+      }
+
       pendingCommand = null;
       setStatus("generating", "已确认，正在生成图片");
       void generateImageFromPrompt(commandToGenerate.prompt || commandToGenerate.subject);
@@ -1088,10 +1095,19 @@ async function handleRecognizedText(transcript, { audioBlob, speakerProfile = la
 
     if (command.intent === "reject") {
       pendingCommand = null;
+      showInpaintRegion();
       setStatus("ready", "请重新说出你想生成的画面");
       return;
     }
 
+    if (command.intent === "edit") {
+      showInpaintRegion(command.inpaintRegion);
+      pendingCommand = command;
+      setStatus("ready", "请说“确认”开始局部重绘，或说“不对”取消");
+      return;
+    }
+
+    showInpaintRegion();
     pendingCommand = command;
     setStatus("ready", "请说“确认”开始生成，或说“不对 / 改成……”调整");
   } catch (error) {

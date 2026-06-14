@@ -1607,7 +1607,101 @@ function buildRevisedCommand(text, previousCommand, speaker) {
   return command;
 }
 
-function parseCommand(text, previousCommand, speaker = {}) {
+function inferEditTarget(text) {
+  const normalizedText = String(text || "").trim();
+  const explicitTargetMatch = normalizedText.match(/把(.+?)(?:换成|改成|调整为|改为|变成|删除|删掉|去掉)/u);
+  const explicitTarget = explicitTargetMatch?.[1]?.trim();
+
+  if (/背景|底色|环境/u.test(normalizedText)) {
+    return { targetObject: "背景", regionType: "background", regionLabel: "背景" };
+  }
+
+  if (/左边|左侧|左下|左上/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "左侧区域", regionType: "left", regionLabel: "左侧区域" };
+  }
+
+  if (/右边|右侧|右下|右上/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "右侧区域", regionType: "right", regionLabel: "右侧区域" };
+  }
+
+  if (/上方|顶部|上面/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "上方区域", regionType: "top", regionLabel: "上方区域" };
+  }
+
+  if (/下方|底部|下面/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "下方区域", regionType: "bottom", regionLabel: "下方区域" };
+  }
+
+  if (/衣服|上衣|裙子|裤子|服装/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "衣服", regionType: "person_clothing", regionLabel: "人物衣服" };
+  }
+
+  if (/人物|人像|角色|脸|头发/u.test(normalizedText)) {
+    return { targetObject: explicitTarget || "人物", regionType: "person", regionLabel: "人物区域" };
+  }
+
+  return { targetObject: explicitTarget || "主体区域", regionType: "subject", regionLabel: explicitTarget || "主体区域" };
+}
+
+function inferEditType(text, editTarget) {
+  const normalizedText = String(text || "").trim();
+
+  if (/删除|删掉|去掉|移除|不要/u.test(normalizedText)) {
+    return "remove_object";
+  }
+
+  if (editTarget.regionType === "background" || /背景|底色|环境/u.test(normalizedText)) {
+    return "replace_background";
+  }
+
+  if (/颜色|换色|改色/u.test(normalizedText)) {
+    return "recolor_object";
+  }
+
+  return "local_redraw";
+}
+
+function buildEditReply(command, speaker) {
+  const keepText = command.mustKeep.length ? `，并保留${command.mustKeep.join("、")}不变` : "";
+  return `${getPersonalizedOpening(speaker, "revision")}我理解为：局部重绘${command.inpaintRegion.label}，${command.instruction}${keepText}。是否确认？`;
+}
+
+function buildEditCommand(text, currentVersionId, speaker) {
+  const editTarget = inferEditTarget(text);
+  const editType = inferEditType(text, editTarget);
+  const mustKeep = [];
+
+  if (/人物不要变|人不要变|主体不要变|保持人物|保留人物/u.test(text)) {
+    mustKeep.push("人物");
+  }
+
+  const command = {
+    intent: "edit",
+    targetVersionId: Number(currentVersionId),
+    editType,
+    targetObject: editTarget.targetObject,
+    instruction: text,
+    mustKeep,
+    needConfirmation: true,
+    inpaintRegion: {
+      type: editTarget.regionType,
+      label: editTarget.regionLabel
+    }
+  };
+
+  command.replyToUser = buildEditReply(command, speaker);
+  return command;
+}
+
+function looksLikeEditCommand(text, currentVersionId) {
+  if (!Number.isFinite(Number(currentVersionId))) {
+    return false;
+  }
+
+  return includesAny(text, ["把", "改", "换", "删除", "删掉", "去掉", "移除", "不要", "变成", "调整"]);
+}
+
+function parseCommand(text, previousCommand, speaker = {}, currentVersionId) {
   const normalizedText = String(text || "").trim();
 
   if (!normalizedText) {
@@ -1648,6 +1742,10 @@ function parseCommand(text, previousCommand, speaker = {}) {
     return buildRevisedCommand(normalizedText, previousCommand, speaker);
   }
 
+  if (looksLikeEditCommand(normalizedText, currentVersionId)) {
+    return buildEditCommand(normalizedText, currentVersionId, speaker);
+  }
+
   return buildGenerateCommand(normalizedText, previousCommand, speaker);
 }
 
@@ -1659,7 +1757,7 @@ async function handleCommand(request, response) {
 
   const payload = await readJsonBody(request);
   const commandText = normalizeTranscriptForImagePrompt(payload.text);
-  const command = parseCommand(commandText, payload.previousCommand, payload.speaker);
+  const command = parseCommand(commandText, payload.previousCommand, payload.speaker, payload.currentVersionId);
 
   sendJson(response, 200, {
     ok: true,
