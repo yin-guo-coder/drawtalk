@@ -1,8 +1,11 @@
 # Drawtalk
 
-## 项目讲解视频
+## 项目相关资料
 
-[点击查看 Drawtalk 项目讲解视频](docs/drawtalk-demo.mp4)
+- [点击查看 Drawtalk 项目讲解视频](docs/drawtalk-demo.mp4)
+- [点击查看 Drawtalk 项目产品 PRD（飞书）](https://my.feishu.cn/docx/UpxEdepqJo57iKxLw7Yc6a2knHf)
+
+> 如果 PRD 链接无法访问，请在飞书文档右上角打开「分享」，将链接权限设置为「互联网上获得链接的人可阅读」或「获得链接的人可阅读」，然后用飞书复制出的公开分享链接替换上方地址。
 
 Drawtalk 是一个纯语音优先的 AI 绘图 Web MVP。用户通过按住麦克风说出绘图需求，系统完成语音转写、AI 复述确认、文生图、版本管理、语音修改和局部重绘。绘图时会根据用户年龄，性别等信息改变绘图及复述风格。
 
