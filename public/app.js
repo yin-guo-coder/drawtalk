@@ -228,7 +228,7 @@ function refreshSpeechVoices() {
   availableSpeechVoices = window.speechSynthesis?.getVoices?.() || [];
 }
 
-function waitForSpeechVoicesReady(timeoutMs = 700) {
+function waitForSpeechVoicesReady(timeoutMs = 2500) {
   refreshSpeechVoices();
 
   if (availableSpeechVoices.length || !window.speechSynthesis?.addEventListener) {
@@ -292,6 +292,14 @@ function voiceIncludesAny(voice, hints = []) {
   return hints.some((hint) => haystack.includes(normalizeVoiceField(hint)));
 }
 
+function isNaturalSpeechVoice(voice) {
+  return voiceIncludesAny(voice, ["natural", "online", "neural", "premium", "multilingual", "自然", "在线"]);
+}
+
+function isLegacyDesktopVoice(voice) {
+  return voiceIncludesAny(voice, ["desktop", "legacy", "default", "桌面"]);
+}
+
 function getSpeechVoiceMatchScore(voice, voicePack = {}) {
   let score = 0;
   const preferredNames = voicePack.voiceNames || [];
@@ -310,12 +318,40 @@ function getSpeechVoiceMatchScore(voice, voicePack = {}) {
     score += 20;
   }
 
+  if (voicePack.genderGroup === "male" && voiceIncludesAny(voice, speechVoiceHints.female)) {
+    score -= 45;
+  }
+
+  if (voicePack.genderGroup === "female" && voiceIncludesAny(voice, speechVoiceHints.male)) {
+    score -= 45;
+  }
+
+  if (isNaturalSpeechVoice(voice)) {
+    score += 55;
+  }
+
+  if (isLegacyDesktopVoice(voice)) {
+    score -= 30;
+  }
+
   return score;
 }
 
 function sortSpeechVoices(voices) {
   return [...voices].sort((first, second) => {
-    const localDiff = Number(Boolean(second.localService)) - Number(Boolean(first.localService));
+    const naturalDiff = Number(isNaturalSpeechVoice(second)) - Number(isNaturalSpeechVoice(first));
+
+    if (naturalDiff) {
+      return naturalDiff;
+    }
+
+    const legacyDiff = Number(isLegacyDesktopVoice(first)) - Number(isLegacyDesktopVoice(second));
+
+    if (legacyDiff) {
+      return legacyDiff;
+    }
+
+    const localDiff = Number(Boolean(first.localService)) - Number(Boolean(second.localService));
 
     if (localDiff) {
       return localDiff;
@@ -329,19 +365,23 @@ function getVoiceAgeGroup(speaker = {}) {
   const ageText = normalizeVoiceField(speaker.age);
   const combinedText = `${ageText} ${normalizeVoiceField(speaker.gender)}`;
 
+  if (/young|adult|青年|年轻|青壮年|18\s*[-~到至]\s*35/u.test(ageText)) {
+    return "young";
+  }
+
   if (/child|kid|children|儿童|小孩/u.test(combinedText)) {
     return "child";
   }
 
-  if (/teen|adolescent|少年|青少年/u.test(ageText)) {
+  if (/teen|adolescent|少年|青少年|13\s*[-~到至]\s*17/u.test(ageText)) {
     return "teen";
   }
 
-  if (/middle|中年/u.test(ageText)) {
+  if (/middle|中年|36\s*[-~到至]\s*59/u.test(ageText)) {
     return "middle";
   }
 
-  if (/senior|elder|old|老年/u.test(ageText)) {
+  if (/senior|elder|old|老年|60\+/u.test(ageText)) {
     return "senior";
   }
 
@@ -403,11 +443,14 @@ function getAssistantVoicePack(speaker = {}) {
   };
 }
 
-function chooseSpeechVoice(voicePack = {}) {
+function chooseSpeechVoice(voicePack = {}, options = {}) {
   refreshSpeechVoices();
 
   const voices = availableSpeechVoices;
-  const candidates = sortSpeechVoices(voices.filter(isChineseSpeechVoice));
+  const excludedVoiceNames = new Set((options.excludedVoiceNames || []).map(normalizeVoiceField));
+  const candidates = sortSpeechVoices(voices.filter((voice) => (
+    isChineseSpeechVoice(voice) && !excludedVoiceNames.has(normalizeVoiceField(voice.name))
+  )));
 
   if (!candidates.length) {
     return undefined;
@@ -519,7 +562,7 @@ function showDialogue(userText, assistantText) {
   }
 }
 
-function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoice) {
+function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoice, failedVoiceNames = []) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
   utterance.rate = clampSpeechValue(voicePack.rate, 1, 0.65, 1.35);
@@ -543,8 +586,9 @@ function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoic
     }
 
     if (voice && !retryWithoutVoice) {
+      const nextFailedVoiceNames = [...failedVoiceNames, voice.name].filter(Boolean);
       window.setTimeout(() => {
-        void speakAssistantReply(text, { retryWithoutVoice: true });
+        void speakAssistantReply(text, { failedVoiceNames: nextFailedVoiceNames });
       }, 80);
       return;
     }
@@ -585,8 +629,11 @@ async function speakAssistantReply(text, options = {}) {
       return;
     }
 
-    const voice = options.retryWithoutVoice ? undefined : chooseSpeechVoice(voicePack);
-    const utterance = buildAssistantUtterance(speechText, voicePack, voice, token, Boolean(options.retryWithoutVoice));
+    const failedVoiceNames = Array.isArray(options.failedVoiceNames) ? options.failedVoiceNames : [];
+    const voice = options.retryWithoutVoice ? undefined : chooseSpeechVoice(voicePack, {
+      excludedVoiceNames: failedVoiceNames
+    });
+    const utterance = buildAssistantUtterance(speechText, voicePack, voice, token, Boolean(options.retryWithoutVoice), failedVoiceNames);
     activeAssistantUtterance = utterance;
     lastAssistantVoicePack = {
       ...voicePack,

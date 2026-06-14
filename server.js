@@ -1280,19 +1280,23 @@ function getPersonalizedAgeGroup(speaker = {}) {
   const ageText = normalizeSpeakerField(speaker.age || speaker.ageGroup || speaker.speakerAge);
   const lowerAge = ageText.toLowerCase();
 
+  if (/young|adult|青年|年轻|青壮年|18\s*[-~到至]\s*35/u.test(lowerAge)) {
+    return "young";
+  }
+
   if (/child|kid|children|儿童|小孩/u.test(lowerAge)) {
     return "child";
   }
 
-  if (/teen|adolescent|少年|青少年/u.test(lowerAge)) {
+  if (/teen|adolescent|少年|青少年|13\s*[-~到至]\s*17/u.test(lowerAge)) {
     return "teen";
   }
 
-  if (/middle|中年/u.test(lowerAge)) {
+  if (/middle|中年|36\s*[-~到至]\s*59/u.test(lowerAge)) {
     return "middle";
   }
 
-  if (/senior|elder|old|老年/u.test(lowerAge)) {
+  if (/senior|elder|old|老年|60\+/u.test(lowerAge)) {
     return "senior";
   }
 
@@ -1429,6 +1433,31 @@ function getPersonalizedOpening(speaker, mode = "generate") {
       }
     },
     revision: {
+      child: {
+        male: "小画家，我正在帮你把颜色和细节变得更漂亮。",
+        female: "小画家，我正在帮你把画面变得更可爱。",
+        unknown: "小画家，别着急，我会帮你调整画面。"
+      },
+      teen: {
+        male: "少年画师，别急，我正在帮你处理细节。",
+        female: "少年创作者，我正在帮你把画面调得更好看。",
+        unknown: "少年创作者，我正在优化最后的细节。"
+      },
+      young: {
+        male: "好的，我会尽量保留你的创意并优化画面效果。",
+        female: "好的，我会帮你把风格和细节处理得更完整。",
+        unknown: "好的，我会根据你的描述优化画面。"
+      },
+      middle: {
+        male: "已收到需求，我会重点保证画面清晰、稳定、符合你的描述。",
+        female: "已收到需求，我会帮你把画面调整得更自然、完整。",
+        unknown: "已收到需求，请稍等，我正在处理画面细节。"
+      },
+      senior: {
+        male: "好的，我正在为您调整图片，请稍等一下，完成后我会为您说明画面内容。",
+        female: "好的，我正在为您调整图片，请稍等一下，完成后我会帮您描述生成结果。",
+        unknown: "好的，请稍等，我会用语音为您说明结果。"
+      },
       unknown: {
         unknown: "已收到，我会按新的描述重新整理画面。"
       }
