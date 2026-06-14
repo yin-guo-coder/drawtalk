@@ -1149,23 +1149,7 @@ async function handleTranscribe(request, response) {
   }
 
   const startedAt = Date.now();
-  const [transcribeResult, speakerResult] = await Promise.allSettled([
-    transcribeAudio(audioBuffer, contentType),
-    analyzeSpeaker(audioBuffer, contentType)
-  ]);
-
-  if (transcribeResult.status === "rejected") {
-    throw transcribeResult.reason;
-  }
-
-  const result = transcribeResult.value;
-  const speaker = {
-    ...(result.speaker || {}),
-    ...(speakerResult.status === "fulfilled" ? speakerResult.value : {})
-  };
-  const speakerAnalysisError = speakerResult.status === "rejected"
-    ? speakerResult.reason?.message || "Speaker analysis failed"
-    : "";
+  const result = await transcribeAudio(audioBuffer, contentType);
 
   sendJson(response, 200, {
     ok: true,
@@ -1173,12 +1157,41 @@ async function handleTranscribe(request, response) {
     rawText: result.rawText,
     source: result.source,
     model: result.model,
+    bytes: audioBuffer.byteLength,
+    elapsedMs: Date.now() - startedAt
+  });
+}
+
+async function handleAnalyzeSpeaker(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const contentType = request.headers["content-type"] || "audio/webm";
+
+  if (!contentType.startsWith("audio/") && contentType !== "application/octet-stream") {
+    sendJson(response, 415, { error: "Only audio uploads are supported" });
+    return;
+  }
+
+  const audioBuffer = await readRequestBody(request);
+
+  if (audioBuffer.byteLength === 0) {
+    sendJson(response, 400, { error: "Audio upload is empty" });
+    return;
+  }
+
+  const startedAt = Date.now();
+  const speaker = await analyzeSpeaker(audioBuffer, contentType);
+
+  sendJson(response, 200, {
+    ok: true,
     speaker,
     gender: speaker.gender || "",
     age: speaker.age || "",
     emotion: speaker.emotion || "",
     speakerAnalysisSource: getSpeakerAnalysisProvider(),
-    speakerAnalysisError,
     bytes: audioBuffer.byteLength,
     elapsedMs: Date.now() - startedAt
   });
@@ -2147,6 +2160,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/transcribe")) {
       await handleTranscribe(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/analyze-speaker")) {
+      await handleAnalyzeSpeaker(request, response);
       return;
     }
 

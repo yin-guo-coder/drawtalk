@@ -682,6 +682,72 @@ async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
   return payload.command;
 }
 
+function includesAnyText(text, keywords) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function shouldAnalyzeSpeakerForCommand(command, text) {
+  const normalizedText = String(text || "").trim();
+
+  if (command.intent !== "generate" || command.userRevision) {
+    return false;
+  }
+
+  if (includesAnyText(normalizedText, [
+    "确认",
+    "可以",
+    "不对",
+    "不是",
+    "改",
+    "换",
+    "调整",
+    "修改",
+    "删除",
+    "去掉",
+    "不要",
+    "保留",
+    "回到",
+    "返回",
+    "继续",
+    "基于"
+  ])) {
+    return false;
+  }
+
+  return includesAnyText(normalizedText, [
+    "画",
+    "生成",
+    "绘制",
+    "做一张",
+    "来一张",
+    "设计",
+    "帮我"
+  ]);
+}
+
+async function analyzeSpeakerFromRecording(audioBlob) {
+  if (!audioBlob) {
+    return {};
+  }
+
+  const response = await fetch("/api/analyze-speaker", {
+    method: "POST",
+    headers: {
+      "Content-Type": audioBlob.type || "audio/webm"
+    },
+    body: audioBlob
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || "说话人分析失败");
+  }
+
+  latestSpeakerProfile = getSpeakerProfile(payload);
+  showSpeechInsights(payload);
+  return latestSpeakerProfile;
+}
+
 function buildPendingCommandFromVersion(version) {
   const fallbackPrompt = version.prompt || version.systemUnderstanding || version.userSpeechText || "";
 
@@ -733,7 +799,7 @@ async function restoreVersion(command, userText) {
   setStatus("ready", `已回到版本 ${version.id}`);
 }
 
-async function handleRecognizedText(transcript, speakerProfile = latestSpeakerProfile) {
+async function handleRecognizedText(transcript, { audioBlob, speakerProfile = latestSpeakerProfile } = {}) {
   const trimmedTranscript = transcript.trim();
 
   if (!trimmedTranscript) {
@@ -745,7 +811,18 @@ async function handleRecognizedText(transcript, speakerProfile = latestSpeakerPr
   setStatus("thinking", "正在理解你的需求");
 
   try {
-    const command = await parseVoiceCommand(trimmedTranscript, speakerProfile);
+    let command = await parseVoiceCommand(trimmedTranscript, speakerProfile);
+
+    if (shouldAnalyzeSpeakerForCommand(command, trimmedTranscript)) {
+      try {
+        setStatus("thinking", "正在根据绘图需求分析说话人特征");
+        const analyzedSpeakerProfile = await analyzeSpeakerFromRecording(audioBlob);
+        command = await parseVoiceCommand(trimmedTranscript, analyzedSpeakerProfile);
+      } catch {
+        latestSpeakerProfile = {};
+        clearSpeechInsights();
+      }
+    }
 
     if (command.intent === "restore_version" || command.intent === "continue_from_version") {
       await restoreVersion(command, trimmedTranscript);
@@ -933,7 +1010,9 @@ async function uploadRecording() {
   }
 
   try {
-    setStatus("thinking", "正在上传语音并分析说话人属性");
+    latestSpeakerProfile = {};
+    clearSpeechInsights();
+    setStatus("thinking", "正在上传语音并转写");
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
@@ -948,9 +1027,7 @@ async function uploadRecording() {
     }
 
     const transcript = payload.text || "";
-    latestSpeakerProfile = getSpeakerProfile(payload);
-    showSpeechInsights(payload);
-    void handleRecognizedText(transcript, latestSpeakerProfile);
+    void handleRecognizedText(transcript, { audioBlob, speakerProfile: latestSpeakerProfile });
   } catch (error) {
     await waitForPassiveSpeechFallback();
     const fallbackTranscript = getPassiveSpeechTranscript();
