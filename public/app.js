@@ -64,6 +64,102 @@ let isGenerating = false;
 let pendingCommand = null;
 let latestSpeakerProfile = {};
 let currentVersionId;
+let availableSpeechVoices = [];
+
+const assistantVoicePacks = {
+  child: {
+    male: {
+      voiceNames: ["yunxi", "xiaoyi", "xiaoxiao", "yunyang", "kangkang"],
+      rate: 1.08,
+      pitch: 1.26
+    },
+    female: {
+      voiceNames: ["xiaoxiao", "xiaoyi", "xiaobei", "huihui", "yaoyao"],
+      rate: 1.1,
+      pitch: 1.32
+    },
+    unknown: {
+      voiceNames: ["xiaoxiao", "xiaoyi", "yunxi", "xiaobei"],
+      rate: 1.08,
+      pitch: 1.28
+    }
+  },
+  teen: {
+    male: {
+      voiceNames: ["yunxi", "yunyang", "kangkang", "yunhao"],
+      rate: 1.04,
+      pitch: 1.12
+    },
+    female: {
+      voiceNames: ["xiaoxiao", "xiaoyi", "xiaobei", "huihui"],
+      rate: 1.05,
+      pitch: 1.18
+    },
+    unknown: {
+      voiceNames: ["xiaoxiao", "yunxi", "xiaoyi"],
+      rate: 1.04,
+      pitch: 1.12
+    }
+  },
+  young: {
+    male: {
+      voiceNames: ["yunxi", "yunyang", "yunhao", "kangkang"],
+      rate: 1,
+      pitch: 0.98
+    },
+    female: {
+      voiceNames: ["xiaoxiao", "xiaoyi", "huihui", "xiaobei"],
+      rate: 1,
+      pitch: 1.08
+    },
+    unknown: {
+      voiceNames: ["xiaoxiao", "yunxi", "xiaoyi"],
+      rate: 1,
+      pitch: 1.02
+    }
+  },
+  middle: {
+    male: {
+      voiceNames: ["yunyang", "yunhao", "yunxi", "kangkang"],
+      rate: 0.94,
+      pitch: 0.88
+    },
+    female: {
+      voiceNames: ["xiaoxiao", "huihui", "xiaoyi", "xiaobei"],
+      rate: 0.95,
+      pitch: 1
+    },
+    unknown: {
+      voiceNames: ["yunyang", "xiaoxiao", "yunxi"],
+      rate: 0.95,
+      pitch: 0.96
+    }
+  },
+  senior: {
+    male: {
+      voiceNames: ["yunyang", "yunhao", "yunxi", "kangkang"],
+      rate: 0.86,
+      pitch: 0.78
+    },
+    female: {
+      voiceNames: ["huihui", "xiaoxiao", "xiaoyi", "xiaobei"],
+      rate: 0.88,
+      pitch: 0.92
+    },
+    unknown: {
+      voiceNames: ["yunyang", "huihui", "xiaoxiao"],
+      rate: 0.88,
+      pitch: 0.86
+    }
+  },
+  unknown: {
+    unknown: {
+      voiceNames: ["xiaoxiao", "yunxi", "xiaoyi", "yunyang"],
+      rate: 0.98,
+      pitch: 1
+    }
+  }
+};
 
 function getVersionSourceLabel(source) {
   if (source === "openai") {
@@ -99,6 +195,107 @@ function getGenerationDoneMessage(source) {
   }
 
   return "图片已生成";
+}
+
+function refreshSpeechVoices() {
+  availableSpeechVoices = window.speechSynthesis?.getVoices?.() || [];
+}
+
+function normalizeVoiceField(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getVoiceAgeGroup(speaker = {}) {
+  const ageText = normalizeVoiceField(speaker.age);
+  const combinedText = `${ageText} ${normalizeVoiceField(speaker.gender)}`;
+
+  if (/child|kid|children|儿童|小孩/u.test(combinedText)) {
+    return "child";
+  }
+
+  if (/teen|adolescent|少年|青少年/u.test(ageText)) {
+    return "teen";
+  }
+
+  if (/middle|中年/u.test(ageText)) {
+    return "middle";
+  }
+
+  if (/senior|elder|old|老年/u.test(ageText)) {
+    return "senior";
+  }
+
+  const ageMatch = ageText.match(/(\d{1,3})/u);
+
+  if (!ageMatch) {
+    return "unknown";
+  }
+
+  const age = Number(ageMatch[1]);
+
+  if (age <= 12) {
+    return "child";
+  }
+
+  if (age <= 17) {
+    return "teen";
+  }
+
+  if (age <= 35) {
+    return "young";
+  }
+
+  if (age <= 59) {
+    return "middle";
+  }
+
+  return "senior";
+}
+
+function getVoiceGenderGroup(speaker = {}) {
+  const genderText = normalizeVoiceField(speaker.gender);
+
+  if (/female|woman|girl|女性|女生|女/u.test(genderText)) {
+    return "female";
+  }
+
+  if (/(^|[^a-z])male([^a-z]|$)|man|boy|男性|男生|男/u.test(genderText)) {
+    return "male";
+  }
+
+  return "unknown";
+}
+
+function getAssistantVoicePack(speaker = {}) {
+  const ageGroup = getVoiceAgeGroup(speaker);
+  const genderGroup = getVoiceGenderGroup(speaker);
+  const agePacks = assistantVoicePacks[ageGroup] || assistantVoicePacks.unknown;
+
+  return agePacks[genderGroup] || agePacks.unknown || assistantVoicePacks.unknown.unknown;
+}
+
+function chooseSpeechVoice(voicePack) {
+  refreshSpeechVoices();
+
+  const voices = availableSpeechVoices;
+  const chineseVoices = voices.filter((voice) => {
+    const lang = normalizeVoiceField(voice.lang);
+    const name = normalizeVoiceField(voice.name);
+    return lang.startsWith("zh") || name.includes("chinese") || name.includes("mandarin") || name.includes("中文") || name.includes("普通话");
+  });
+  const candidates = chineseVoices.length ? chineseVoices : voices;
+  const preferredNames = voicePack.voiceNames || [];
+
+  for (const preferredName of preferredNames) {
+    const normalizedPreferredName = normalizeVoiceField(preferredName);
+    const voice = candidates.find((candidate) => normalizeVoiceField(candidate.name).includes(normalizedPreferredName));
+
+    if (voice) {
+      return voice;
+    }
+  }
+
+  return candidates[0];
 }
 
 function setStatus(state, message) {
@@ -170,9 +367,19 @@ function speakAssistantReply(text) {
 
   window.speechSynthesis.cancel();
 
+  const voicePack = getAssistantVoicePack(latestSpeakerProfile);
+  const voice = chooseSpeechVoice(voicePack);
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = 1;
+  utterance.rate = voicePack.rate;
+  utterance.pitch = voicePack.pitch;
+  utterance.volume = 1;
+
+  if (voice) {
+    utterance.voice = voice;
+    utterance.lang = voice.lang || "zh-CN";
+  }
+
   window.speechSynthesis.speak(utterance);
 }
 
@@ -254,11 +461,19 @@ setStatus("idle");
 showTranscript("");
 clearSpeechInsights();
 renderVersions();
+refreshSpeechVoices();
+
+if (window.speechSynthesis?.addEventListener) {
+  window.speechSynthesis.addEventListener("voiceschanged", refreshSpeechVoices);
+}
+
 void loadVersions();
 
 window.drawtalkUi = {
   setStatus,
   showTranscript,
+  getAssistantVoicePack,
+  chooseSpeechVoice,
   loadVersions,
   renderVersions
 };
