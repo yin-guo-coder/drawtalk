@@ -5,6 +5,7 @@ import { connect as netConnect } from "node:net";
 import { basename, extname, relative, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = resolve(__dirname, "public");
@@ -1944,6 +1945,86 @@ function getRegionBox(regionType) {
   return boxes[regionType] || boxes.subject;
 }
 
+const crc32Table = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+
+  return value >>> 0;
+});
+
+function getCrc32(buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createPngChunk(type, data = Buffer.alloc(0)) {
+  const typeBuffer = Buffer.from(type, "ascii");
+  const lengthBuffer = Buffer.alloc(4);
+  const crcBuffer = Buffer.alloc(4);
+
+  lengthBuffer.writeUInt32BE(data.length, 0);
+  crcBuffer.writeUInt32BE(getCrc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([lengthBuffer, typeBuffer, data, crcBuffer]);
+}
+
+function encodeRgbaPng(width, height, pixels) {
+  const scanlineLength = width * 4 + 1;
+  const raw = Buffer.alloc(scanlineLength * height);
+
+  for (let y = 0; y < height; y += 1) {
+    raw[y * scanlineLength] = 0;
+    pixels.copy(raw, y * scanlineLength + 1, y * width * 4, (y + 1) * width * 4);
+  }
+
+  const header = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  return Buffer.concat([
+    header,
+    createPngChunk("IHDR", ihdr),
+    createPngChunk("IDAT", deflateSync(raw)),
+    createPngChunk("IEND")
+  ]);
+}
+
+function createRegionMaskPngBase64(width, height, regionType) {
+  const box = getRegionBox(regionType);
+  const startX = Math.max(0, Math.round(width * box.x));
+  const startY = Math.max(0, Math.round(height * box.y));
+  const endX = Math.min(width, Math.round(width * (box.x + box.width)));
+  const endY = Math.min(height, Math.round(height * (box.y + box.height)));
+  const pixels = Buffer.alloc(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const inRegion = x >= startX && x <= endX && y >= startY && y <= endY;
+      const value = inRegion ? 255 : 0;
+      pixels[offset] = value;
+      pixels[offset + 1] = value;
+      pixels[offset + 2] = value;
+      pixels[offset + 3] = 255;
+    }
+  }
+
+  return encodeRgbaPng(width, height, pixels).toString("base64");
+}
+
 function getAspectRatioDimensionsFromVersion(version) {
   const sizeText = String(version?.params?.size || "");
   const sizeMatch = sizeText.match(/(\d{2,5})x(\d{2,5})/u);
@@ -2206,6 +2287,123 @@ async function generateImageWithHorde({ prompt, aspectRatio }) {
   throw error;
 }
 
+async function generateImageEditWithHorde({ prompt, sourceVersion, command }) {
+  const sourceImagePath = resolveOutputImagePath(sourceVersion.imagePath);
+  const sourceExtension = extname(sourceImagePath || "").toLowerCase();
+
+  if (!sourceImagePath || ![".png", ".jpg", ".jpeg", ".webp"].includes(sourceExtension)) {
+    const error = new Error("当前版本图片格式暂不支持 AI Horde 局部重绘，已使用本地预览。");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const dimensions = getAspectRatioDimensionsFromVersion(sourceVersion);
+  const models = getHordeModels();
+  const sourceImageBase64 = (await readFile(sourceImagePath)).toString("base64");
+  const sourceMaskBase64 = createRegionMaskPngBase64(
+    dimensions.width,
+    dimensions.height,
+    command.inpaintRegion?.type || "subject"
+  );
+  const requestBody = {
+    prompt,
+    params: {
+      n: 1,
+      width: dimensions.width,
+      height: dimensions.height,
+      steps: Number(process.env.HORDE_STEPS || 10),
+      cfg_scale: Number(process.env.HORDE_CFG_SCALE || 7),
+      denoising_strength: Number(process.env.HORDE_DENOISING_STRENGTH || 0.72)
+    },
+    source_image: sourceImageBase64,
+    source_processing: "inpainting",
+    source_mask: sourceMaskBase64,
+    nsfw: false,
+    trusted_workers: false,
+    censor_nsfw: true,
+    r2: false
+  };
+
+  if (models.length > 0) {
+    requestBody.models = models;
+  }
+
+  const createResponse = await postJson(
+    "https://aihorde.net/api/v2/generate/async",
+    requestBody,
+    getHordeHeaders()
+  );
+
+  if (!createResponse.ok) {
+    const message = createResponse.payload.message || createResponse.payload.error?.message || "AI Horde image edit request failed";
+    const error = new Error(message);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const generationId = createResponse.payload.id;
+
+  if (!generationId) {
+    const error = new Error("AI Horde did not return an edit generation id");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const timeoutMs = Number(process.env.HORDE_TIMEOUT_MS || 180000);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const checkResponse = await getJson(
+      `https://aihorde.net/api/v2/generate/check/${generationId}`,
+      getHordeHeaders()
+    );
+
+    if (!checkResponse.ok) {
+      const message = checkResponse.payload.message || checkResponse.payload.error?.message || "AI Horde edit status check failed";
+      const error = new Error(message);
+      error.statusCode = 502;
+      throw error;
+    }
+
+    if (checkResponse.payload.done) {
+      const statusResponse = await getJson(
+        `https://aihorde.net/api/v2/generate/status/${generationId}`,
+        getHordeHeaders()
+      );
+
+      if (!statusResponse.ok) {
+        const message = statusResponse.payload.message || statusResponse.payload.error?.message || "AI Horde edit result fetch failed";
+        const error = new Error(message);
+        error.statusCode = 502;
+        throw error;
+      }
+
+      const generation = statusResponse.payload.generations?.[0];
+      const imageBase64 = normalizeImageBase64(generation?.img);
+
+      if (!imageBase64 || generation?.censored) {
+        const error = new Error(generation?.censored ? "AI Horde censored this edit" : "AI Horde did not return edited image data");
+        error.statusCode = 502;
+        throw error;
+      }
+
+      return {
+        imageBase64,
+        model: generation.model || models[0] || "AI Horde auto",
+        dimensions,
+        generationId
+      };
+    }
+
+    const waitSeconds = Math.max(2, Math.min(Number(checkResponse.payload.wait_time || 4), 10));
+    await delay(waitSeconds * 1000);
+  }
+
+  const error = new Error("AI Horde image edit timed out. Local preview was used instead.");
+  error.statusCode = 504;
+  throw error;
+}
+
 async function generateImageWithOpenAI({ prompt, size }) {
   if (!process.env.OPENAI_API_KEY) {
     const error = new Error("Missing OPENAI_API_KEY. Local preview image was used instead.");
@@ -2406,10 +2604,43 @@ async function handleEditImage(request, response) {
 
   const startedAt = Date.now();
   const prompt = buildEditPrompt(normalizedCommand, sourceVersion);
-  const savedImage = await saveLocalEditPreviewImage({
-    sourceVersion,
-    command: normalizedCommand
-  });
+  const provider = normalizeImageProvider(payload.provider || process.env.IMAGE_PROVIDER || "horde") || "horde";
+  const params = {
+    provider,
+    editType: normalizedCommand.editType,
+    targetObject: normalizedCommand.targetObject,
+    inpaintRegion: normalizedCommand.inpaintRegion,
+    sourceVersionId: sourceVersion.id
+  };
+  let savedImage;
+  let source = provider;
+
+  try {
+    if (provider === "horde") {
+      const generated = await generateImageEditWithHorde({
+        prompt,
+        sourceVersion,
+        command: normalizedCommand
+      });
+
+      params.model = generated.model;
+      params.size = `${generated.dimensions.width}x${generated.dimensions.height}`;
+      params.generationId = generated.generationId;
+      savedImage = await saveGeneratedImage({ imageBase64: generated.imageBase64 });
+    } else {
+      const error = new Error("当前模型暂未接入图片编辑，已使用本地预览。");
+      error.statusCode = 503;
+      throw error;
+    }
+  } catch (error) {
+    source = "local-preview";
+    params.fallbackFrom = provider;
+    params.fallbackReason = error.message || "Image edit provider failed";
+    savedImage = await saveLocalEditPreviewImage({
+      sourceVersion,
+      command: normalizedCommand
+    });
+  }
 
   const version = await appendVersionRecord({
     id: savedImage.versionId,
@@ -2419,14 +2650,8 @@ async function handleEditImage(request, response) {
     systemUnderstanding: `局部重绘${normalizedCommand.inpaintRegion.label}：${normalizedCommand.instruction}`,
     prompt,
     imagePath: savedImage.imageUrl,
-    params: {
-      provider: payload.provider || "local-preview",
-      editType: normalizedCommand.editType,
-      targetObject: normalizedCommand.targetObject,
-      inpaintRegion: normalizedCommand.inpaintRegion,
-      sourceVersionId: sourceVersion.id
-    },
-    source: "local-preview",
+    params,
+    source,
     createdAt: new Date().toISOString()
   });
 
