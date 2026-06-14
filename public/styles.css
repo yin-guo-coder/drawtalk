@@ -412,6 +412,11 @@ h2 {
   background: var(--surface-strong);
 }
 
+.version-item.is-current {
+  border-color: rgba(23, 108, 114, 0.42);
+  background: rgba(23, 108, 114, 0.08);
+}
+
 .version-item strong {
   font-size: 0.95rem;
 }

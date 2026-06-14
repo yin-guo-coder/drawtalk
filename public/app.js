@@ -63,6 +63,7 @@ let versions = [];
 let isGenerating = false;
 let pendingCommand = null;
 let latestSpeakerProfile = {};
+let currentVersionId;
 
 function getVersionSourceLabel(source) {
   if (source === "openai") {
@@ -186,6 +187,7 @@ function showGeneratedImage(version) {
 
   image.src = `${version.imagePath}?t=${Date.now()}`;
   image.alt = version.systemUnderstanding || version.userSpeechText || "生成图片";
+  currentVersionId = Number(version.id);
   emptyImage.hidden = true;
   imageFrame.classList.add("has-generated-image");
 }
@@ -204,6 +206,10 @@ function renderVersions(versions = []) {
   for (const version of versions) {
     const item = document.createElement("li");
     item.className = "version-item";
+
+    if (Number(version.id) === Number(currentVersionId)) {
+      item.classList.add("is-current");
+    }
 
     const title = document.createElement("strong");
     title.textContent = `版本 ${version.id}`;
@@ -233,11 +239,12 @@ async function loadVersions() {
     }
 
     versions = Array.isArray(payload.versions) ? payload.versions : [];
-    renderVersions(versions);
 
     if (versions[0]) {
       showGeneratedImage(versions[0]);
     }
+
+    renderVersions(versions);
   } catch (error) {
     setStatus("error", error.message || "版本列表加载失败");
   }
@@ -460,6 +467,33 @@ async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
   return payload.command;
 }
 
+async function restoreVersion(command, userText) {
+  const response = await fetch("/api/versions/restore", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      target: command.versionTarget,
+      targetVersionId: command.targetVersionId,
+      currentVersionId
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || "版本回退失败");
+  }
+
+  const version = payload.version;
+  versions = Array.isArray(payload.versions) ? payload.versions : versions;
+  pendingCommand = null;
+  showGeneratedImage(version);
+  renderVersions(versions);
+  showDialogue(userText, `已回到版本 ${version.id}。`);
+  setStatus("ready", `已回到版本 ${version.id}`);
+}
+
 async function handleRecognizedText(transcript, speakerProfile = latestSpeakerProfile) {
   const trimmedTranscript = transcript.trim();
 
@@ -473,6 +507,12 @@ async function handleRecognizedText(transcript, speakerProfile = latestSpeakerPr
 
   try {
     const command = await parseVoiceCommand(trimmedTranscript, speakerProfile);
+
+    if (command.intent === "restore_version") {
+      await restoreVersion(command, trimmedTranscript);
+      return;
+    }
+
     showDialogue(trimmedTranscript, command.replyToUser);
 
     if (command.intent === "confirm") {

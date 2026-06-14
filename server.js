@@ -349,6 +349,57 @@ async function handleVersions(request, response) {
   });
 }
 
+function getVersionById(versions, versionId) {
+  const normalizedId = Number(versionId);
+  return versions.find((version) => Number(version.id) === normalizedId);
+}
+
+function getPreviousVersion(versions, currentVersionId) {
+  const sortedVersions = [...versions]
+    .filter((version) => Number.isFinite(Number(version.id)))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+
+  if (sortedVersions.length < 2) {
+    return undefined;
+  }
+
+  const normalizedCurrentId = Number(currentVersionId);
+
+  if (Number.isFinite(normalizedCurrentId)) {
+    const currentIndex = sortedVersions.findIndex((version) => Number(version.id) === normalizedCurrentId);
+
+    if (currentIndex > 0) {
+      return sortedVersions[currentIndex - 1];
+    }
+  }
+
+  return sortedVersions[sortedVersions.length - 2];
+}
+
+async function handleVersionRestore(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const payload = await readJsonBody(request);
+  const versions = await readVersionRecords();
+  const version = payload.target === "previous"
+    ? getPreviousVersion(versions, payload.currentVersionId)
+    : getVersionById(versions, payload.targetVersionId);
+
+  if (!version) {
+    sendJson(response, 404, { error: "没有找到要回退的版本" });
+    return;
+  }
+
+  sendJson(response, 200, {
+    ok: true,
+    version,
+    versions
+  });
+}
+
 function getAudioExtension(contentType) {
   const mimeType = contentType.split(";")[0].trim().toLowerCase();
   return audioExtensions[mimeType] || "webm";
@@ -1410,6 +1461,78 @@ function buildRejectReply(speaker) {
   return getPersonalizedOpening(speaker, "reject");
 }
 
+function parseChineseVersionNumber(value) {
+  const text = String(value || "").trim();
+
+  if (/^\d+$/u.test(text)) {
+    return Number(text);
+  }
+
+  const digits = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+
+  if (digits[text]) {
+    return digits[text];
+  }
+
+  if (text === "十") {
+    return 10;
+  }
+
+  const tenMatch = text.match(/^([一二两三四五六七八九])?十([一二三四五六七八九])?$/u);
+
+  if (!tenMatch) {
+    return undefined;
+  }
+
+  const tens = tenMatch[1] ? digits[tenMatch[1]] : 1;
+  const ones = tenMatch[2] ? digits[tenMatch[2]] : 0;
+  return tens * 10 + ones;
+}
+
+function parseVersionRestoreCommand(text) {
+  const normalizedText = String(text || "").trim();
+  const hasRestoreVerb = includesAny(normalizedText, ["回到", "返回", "切回", "恢复到", "回退到", "退回"]);
+
+  if (hasRestoreVerb && includesAny(normalizedText, ["上一版", "上一个版本", "前一版", "前一个版本"])) {
+    return {
+      intent: "restore_version",
+      versionTarget: "previous",
+      needConfirmation: false,
+      replyToUser: "好的，正在切回上一版。"
+    };
+  }
+
+  if (!hasRestoreVerb) {
+    return undefined;
+  }
+
+  const versionMatch = normalizedText.match(/第\s*([0-9一二两三四五六七八九十]+)\s*(?:版|个版本)/u)
+    || normalizedText.match(/([0-9一二两三四五六七八九十]+)\s*(?:版|个版本)/u);
+  const targetVersionId = parseChineseVersionNumber(versionMatch?.[1]);
+
+  if (!targetVersionId) {
+    return undefined;
+  }
+
+  return {
+    intent: "restore_version",
+    targetVersionId,
+    needConfirmation: false,
+    replyToUser: `好的，正在切回版本 ${targetVersionId}。`
+  };
+}
+
 function buildGenerateCommand(text, previousCommand, speaker) {
   const aspectRatio = parseAspectRatio(text);
   const command = {
@@ -1445,6 +1568,12 @@ function parseCommand(text, previousCommand, speaker = {}) {
     const error = new Error("Command text is required");
     error.statusCode = 400;
     throw error;
+  }
+
+  const versionRestoreCommand = parseVersionRestoreCommand(normalizedText);
+
+  if (versionRestoreCommand) {
+    return versionRestoreCommand;
   }
 
   if (includesAny(normalizedText, ["确认", "可以", "没问题", "对", "开始生成", "就这样"]) && !includesAny(normalizedText, ["不对", "不是", "不要"])) {
@@ -1989,6 +2118,11 @@ const server = createServer(async (request, response) => {
 
     if (request.url?.startsWith("/api/generate-image")) {
       await handleGenerateImage(request, response);
+      return;
+    }
+
+    if (request.url?.startsWith("/api/versions/restore")) {
+      await handleVersionRestore(request, response);
       return;
     }
 
