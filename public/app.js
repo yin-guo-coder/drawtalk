@@ -73,6 +73,7 @@ let activeAssistantUtterance;
 let speechRestartTimer;
 let speechPlaybackToken = 0;
 let lastAssistantVoicePack = {};
+let nextSessionVersionId = 1;
 
 const assistantVoicePacks = {
   child: {
@@ -188,13 +189,24 @@ const speechVoiceHints = {
   senior: ["huihui", "yunyang", "kangkang", "elder", "senior", "老年", "慧慧", "云扬", "康康"]
 };
 
-function getVersionSourceLabel(source) {
+function getVersionSourceLabel(version) {
+  const source = typeof version === "string" ? version : version?.source;
+  const fallbackFrom = typeof version === "object" ? version.params?.fallbackFrom : "";
+
   if (source === "openai") {
     return "GPT Image 生成";
   }
 
   if (source === "horde") {
     return "AI Horde 生成";
+  }
+
+  if (source === "local-preview" && fallbackFrom === "horde") {
+    return "AI Horde 本地预览";
+  }
+
+  if (source === "local-preview" && fallbackFrom === "openai") {
+    return "GPT Image 本地预览";
   }
 
   return "本地预览";
@@ -208,8 +220,19 @@ function getProviderLabel(provider) {
   return "AI Horde";
 }
 
-function getGenerationDoneMessage(source) {
+function getGenerationDoneMessage(version) {
+  const source = typeof version === "string" ? version : version?.source;
+  const fallbackFrom = typeof version === "object" ? version.params?.fallbackFrom : "";
+
   if (source === "local-preview") {
+    if (fallbackFrom === "horde") {
+      return "AI Horde 暂时超时，已生成本地预览";
+    }
+
+    if (fallbackFrom === "openai") {
+      return "GPT Image 暂不可用，已生成本地预览";
+    }
+
     return "已生成本地预览";
   }
 
@@ -666,6 +689,36 @@ function showGeneratedImage(version) {
   imageFrame.classList.add("has-generated-image");
 }
 
+function getDisplayVersionId(version) {
+  const displayId = Number(version?.displayId);
+  return Number.isFinite(displayId) ? displayId : version?.id;
+}
+
+function assignSessionVersionId(version) {
+  if (!version || typeof version !== "object") {
+    return version;
+  }
+
+  const existingVersion = versions.find((savedVersion) => Number(savedVersion.id) === Number(version.id));
+
+  if (existingVersion) {
+    const displayId = existingVersion.displayId;
+    Object.assign(existingVersion, version, { displayId });
+    return existingVersion;
+  }
+
+  version.displayId = nextSessionVersionId;
+  nextSessionVersionId += 1;
+  return version;
+}
+
+function resolveActualVersionId(displayVersionId) {
+  const normalizedDisplayId = Number(displayVersionId);
+  const matchedVersion = versions.find((version) => Number(getDisplayVersionId(version)) === normalizedDisplayId);
+
+  return matchedVersion?.id ?? displayVersionId;
+}
+
 function clearGeneratedImage() {
   const image = imageFrame.querySelector(".generated-image");
 
@@ -680,6 +733,7 @@ function clearGeneratedImage() {
 
 function clearCurrentSessionVersions() {
   versions = [];
+  nextSessionVersionId = 1;
   pendingCommand = null;
   clearGeneratedImage();
   renderVersions(versions);
@@ -705,7 +759,7 @@ function renderVersions(versions = []) {
     }
 
     const title = document.createElement("strong");
-    title.textContent = `版本 ${version.id}`;
+    title.textContent = `版本 ${getDisplayVersionId(version)}`;
 
     const detail = document.createElement("span");
     detail.textContent = version.userSpeechText || version.prompt || "等待生成";
@@ -714,7 +768,7 @@ function renderVersions(versions = []) {
     meta.textContent = [
       version.params?.aspectRatio,
       version.params?.size,
-      getVersionSourceLabel(version.source)
+      getVersionSourceLabel(version)
     ].filter(Boolean).join(" · ");
 
     item.append(title, detail, meta);
@@ -972,11 +1026,11 @@ async function generateImageFromPrompt(prompt) {
       throw new Error(payload.error || "图片生成失败");
     }
 
-    const version = payload.version;
-    versions = [version, ...versions];
+    const version = assignSessionVersionId(payload.version);
+    versions = [version, ...versions.filter((savedVersion) => Number(savedVersion.id) !== Number(version.id))];
     showGeneratedImage(version);
     renderVersions(versions);
-    setStatus("ready", getGenerationDoneMessage(version.source));
+    setStatus("ready", getGenerationDoneMessage(version));
   } catch (error) {
     setStatus("error", error.message || "图片生成失败");
   } finally {
@@ -1014,7 +1068,7 @@ async function editImageFromCommand(command) {
       throw new Error(payload.error || "局部重绘失败");
     }
 
-    const version = payload.version;
+    const version = assignSessionVersionId(payload.version);
     versions = [version, ...versions.filter((savedVersion) => Number(savedVersion.id) !== Number(version.id))];
     showGeneratedImage(version);
     renderVersions(versions);
@@ -1134,6 +1188,9 @@ function buildPendingCommandFromVersion(version) {
 }
 
 async function restoreVersion(command, userText) {
+  const targetVersionId = command.targetVersionId
+    ? resolveActualVersionId(command.targetVersionId)
+    : command.targetVersionId;
   const response = await fetch("/api/versions/restore", {
     method: "POST",
     headers: {
@@ -1141,7 +1198,7 @@ async function restoreVersion(command, userText) {
     },
     body: JSON.stringify({
       target: command.versionTarget,
-      targetVersionId: command.targetVersionId,
+      targetVersionId,
       currentVersionId
     })
   });
@@ -1151,23 +1208,24 @@ async function restoreVersion(command, userText) {
     throw new Error(payload.error || "版本回退失败");
   }
 
-  const version = payload.version;
+  const version = assignSessionVersionId(payload.version);
   versions = versions.some((savedVersion) => Number(savedVersion.id) === Number(version.id))
     ? versions
     : [version, ...versions];
   showGeneratedImage(version);
   renderVersions(versions);
+  const displayVersionId = getDisplayVersionId(version);
 
   if (command.intent === "continue_from_version") {
     pendingCommand = buildPendingCommandFromVersion(version);
-    showDialogue(userText, `已切到版本 ${version.id}，可以继续说要怎么修改。`);
-    setStatus("ready", `可以继续修改版本 ${version.id}`);
+    showDialogue(userText, `已切到版本 ${displayVersionId}，可以继续说要怎么修改。`);
+    setStatus("ready", `可以继续修改版本 ${displayVersionId}`);
     return;
   }
 
   pendingCommand = null;
-  showDialogue(userText, `已回到版本 ${version.id}。`);
-  setStatus("ready", `已回到版本 ${version.id}`);
+  showDialogue(userText, `已回到版本 ${displayVersionId}。`);
+  setStatus("ready", `已回到版本 ${displayVersionId}`);
 }
 
 async function handleRecognizedText(transcript, { audioBlob, speakerProfile = latestSpeakerProfile } = {}) {

@@ -1990,8 +1990,30 @@ function wrapText(text, maxLength = 18) {
   return lines.slice(0, 4);
 }
 
-function buildLocalPreviewSvg(prompt, aspectRatio) {
+function getLocalPreviewCopy(provider, fallbackReason) {
+  if (provider === "horde") {
+    return {
+      label: "AI HORDE PREVIEW",
+      message: "AI Horde 公共队列超时，已生成本地预览，未调用 OpenAI"
+    };
+  }
+
+  if (provider === "openai") {
+    return {
+      label: "GPT IMAGE PREVIEW",
+      message: fallbackReason ? "GPT Image 暂不可用，已生成本地预览" : "配置 OPENAI_API_KEY 后生成真实 AI 图片"
+    };
+  }
+
+  return {
+    label: "LOCAL PREVIEW",
+    message: fallbackReason || "外部生图模型暂不可用，已生成本地预览"
+  };
+}
+
+function buildLocalPreviewSvg(prompt, aspectRatio, provider, fallbackReason) {
   const [width, height] = aspectRatio.size.split("x").map(Number);
+  const previewCopy = getLocalPreviewCopy(provider, fallbackReason);
   const lines = wrapText(prompt).map((line, index) => {
     const y = height * 0.62 + index * 48;
     return `<text x="${width * 0.08}" y="${y}" font-size="34" fill="#f8fbff">${escapeSvgText(line)}</text>`;
@@ -2018,9 +2040,9 @@ function buildLocalPreviewSvg(prompt, aspectRatio) {
   <rect width="100%" height="100%" fill="url(#glow)"/>
   <rect y="${height * 0.55}" width="100%" height="${height * 0.45}" fill="url(#grid)" opacity="0.62"/>
   <circle cx="${width * 0.75}" cy="${height * 0.22}" r="${Math.min(width, height) * 0.14}" fill="#ffffff" opacity="0.1"/>
-  <text x="${width * 0.08}" y="${height * 0.12}" font-size="28" font-family="Arial, sans-serif" fill="#d9fbff" font-weight="700">LOCAL PREVIEW</text>
+  <text x="${width * 0.08}" y="${height * 0.12}" font-size="28" font-family="Arial, sans-serif" fill="#d9fbff" font-weight="700">${escapeSvgText(previewCopy.label)}</text>
   <text x="${width * 0.08}" y="${height * 0.2}" font-size="52" font-family="Arial, sans-serif" fill="#ffffff" font-weight="800">Drawtalk</text>
-  <text x="${width * 0.08}" y="${height * 0.28}" font-size="28" font-family="Arial, sans-serif" fill="#c6d6dd">配置 OPENAI_API_KEY 后生成真实 AI 图片</text>
+  <text x="${width * 0.08}" y="${height * 0.28}" font-size="28" font-family="Arial, sans-serif" fill="#c6d6dd">${escapeSvgText(previewCopy.message)}</text>
   <text x="${width * 0.08}" y="${height * 0.54}" font-size="30" font-family="Arial, sans-serif" fill="#b9e6e9">识别到的提示词</text>
   <g font-family="Arial, 'Microsoft YaHei', sans-serif" font-weight="700">${lines}</g>
 </svg>`;
@@ -2058,13 +2080,13 @@ async function saveGeneratedImage({ imageBase64, extension }) {
   };
 }
 
-async function saveLocalPreviewImage({ prompt, aspectRatio }) {
+async function saveLocalPreviewImage({ prompt, aspectRatio, provider, fallbackReason }) {
   const versionId = await allocateVersionId();
   const fileName = `version-${versionId}.svg`;
   const imagePath = resolve(outputsDir, fileName);
 
   await mkdir(outputsDir, { recursive: true });
-  await writeFile(imagePath, buildLocalPreviewSvg(prompt, aspectRatio), "utf8");
+  await writeFile(imagePath, buildLocalPreviewSvg(prompt, aspectRatio, provider, fallbackReason), "utf8");
 
   return {
     versionId,
@@ -2680,7 +2702,9 @@ async function handleGenerateImage(request, response) {
     params.fallbackReason = error.message || "Image provider failed";
     savedImage = await saveLocalPreviewImage({
       prompt: userPrompt,
-      aspectRatio
+      aspectRatio,
+      provider,
+      fallbackReason: params.fallbackReason
     });
   }
 
