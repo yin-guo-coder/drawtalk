@@ -68,52 +68,53 @@ let availableSpeechVoices = [];
 let activeAssistantUtterance;
 let speechRestartTimer;
 let speechPlaybackToken = 0;
+let lastAssistantVoicePack = {};
 
 const assistantVoicePacks = {
   child: {
     male: {
       voiceNames: ["yunxi", "xiaoyi", "xiaoxiao", "yunyang", "kangkang"],
-      rate: 1.08,
-      pitch: 1.26
+      rate: 1.14,
+      pitch: 1.45
     },
     female: {
       voiceNames: ["xiaoxiao", "xiaoyi", "xiaobei", "huihui", "yaoyao"],
-      rate: 1.1,
-      pitch: 1.32
+      rate: 1.16,
+      pitch: 1.58
     },
     unknown: {
       voiceNames: ["xiaoxiao", "xiaoyi", "yunxi", "xiaobei"],
-      rate: 1.08,
-      pitch: 1.28
+      rate: 1.14,
+      pitch: 1.5
     }
   },
   teen: {
     male: {
       voiceNames: ["yunxi", "yunyang", "kangkang", "yunhao"],
-      rate: 1.04,
-      pitch: 1.12
+      rate: 1.08,
+      pitch: 1.18
     },
     female: {
       voiceNames: ["xiaoxiao", "xiaoyi", "xiaobei", "huihui"],
-      rate: 1.05,
-      pitch: 1.18
+      rate: 1.09,
+      pitch: 1.3
     },
     unknown: {
       voiceNames: ["xiaoxiao", "yunxi", "xiaoyi"],
-      rate: 1.04,
-      pitch: 1.12
+      rate: 1.08,
+      pitch: 1.22
     }
   },
   young: {
     male: {
       voiceNames: ["yunxi", "yunyang", "yunhao", "kangkang"],
-      rate: 1,
-      pitch: 0.98
+      rate: 0.98,
+      pitch: 0.92
     },
     female: {
       voiceNames: ["xiaoxiao", "xiaoyi", "huihui", "xiaobei"],
-      rate: 1,
-      pitch: 1.08
+      rate: 1.02,
+      pitch: 1.14
     },
     unknown: {
       voiceNames: ["xiaoxiao", "yunxi", "xiaoyi"],
@@ -124,35 +125,35 @@ const assistantVoicePacks = {
   middle: {
     male: {
       voiceNames: ["yunyang", "yunhao", "yunxi", "kangkang"],
-      rate: 0.94,
-      pitch: 0.88
+      rate: 0.9,
+      pitch: 0.78
     },
     female: {
       voiceNames: ["xiaoxiao", "huihui", "xiaoyi", "xiaobei"],
-      rate: 0.95,
-      pitch: 1
+      rate: 0.94,
+      pitch: 0.98
     },
     unknown: {
       voiceNames: ["yunyang", "xiaoxiao", "yunxi"],
-      rate: 0.95,
-      pitch: 0.96
+      rate: 0.93,
+      pitch: 0.9
     }
   },
   senior: {
     male: {
       voiceNames: ["yunyang", "yunhao", "yunxi", "kangkang"],
-      rate: 0.86,
-      pitch: 0.78
+      rate: 0.82,
+      pitch: 0.62
     },
     female: {
       voiceNames: ["huihui", "xiaoxiao", "xiaoyi", "xiaobei"],
-      rate: 0.88,
-      pitch: 0.92
+      rate: 0.86,
+      pitch: 0.78
     },
     unknown: {
       voiceNames: ["yunyang", "huihui", "xiaoxiao"],
-      rate: 0.88,
-      pitch: 0.86
+      rate: 0.84,
+      pitch: 0.7
     }
   },
   unknown: {
@@ -162,6 +163,25 @@ const assistantVoicePacks = {
       pitch: 1
     }
   }
+};
+
+const voiceFallbackSlots = {
+  child: { female: 0, male: 1, unknown: 0 },
+  teen: { female: 1, male: 2, unknown: 1 },
+  young: { female: 0, male: 2, unknown: 0 },
+  middle: { female: 1, male: 3, unknown: 1 },
+  senior: { female: 1, male: 3, unknown: 3 },
+  unknown: { unknown: 0 }
+};
+
+const speechVoiceHints = {
+  female: ["xiaoxiao", "xiaoyi", "xiaobei", "huihui", "yaoyao", "xiaohan", "xiaomo", "female", "woman", "girl", "女声", "女士", "晓晓", "晓伊", "晓北", "慧慧", "瑶瑶"],
+  male: ["yunxi", "yunyang", "yunhao", "yunjian", "kangkang", "male", "man", "boy", "男声", "先生", "云希", "云扬", "云皓", "云健", "康康"],
+  child: ["xiaoyi", "xiaoxiao", "yunxi", "kid", "child", "童声", "儿童", "晓伊", "晓晓", "云希"],
+  teen: ["xiaoyi", "yunxi", "xiaobei", "young", "teen", "少年", "晓伊", "云希", "晓北"],
+  young: ["xiaoxiao", "yunxi", "xiaoyi", "晓晓", "云希", "晓伊"],
+  middle: ["yunyang", "yunhao", "huihui", "kangkang", "云扬", "云皓", "慧慧", "康康"],
+  senior: ["huihui", "yunyang", "kangkang", "elder", "senior", "老年", "慧慧", "云扬", "康康"]
 };
 
 function getVersionSourceLabel(source) {
@@ -204,6 +224,32 @@ function refreshSpeechVoices() {
   availableSpeechVoices = window.speechSynthesis?.getVoices?.() || [];
 }
 
+function waitForSpeechVoicesReady(timeoutMs = 700) {
+  refreshSpeechVoices();
+
+  if (availableSpeechVoices.length || !window.speechSynthesis?.addEventListener) {
+    return Promise.resolve(availableSpeechVoices);
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      window.clearTimeout(timeout);
+      window.speechSynthesis.removeEventListener("voiceschanged", finish);
+      refreshSpeechVoices();
+      resolve(availableSpeechVoices);
+    };
+    const timeout = window.setTimeout(finish, timeoutMs);
+
+    window.speechSynthesis.addEventListener("voiceschanged", finish);
+  });
+}
+
 function normalizeVoiceField(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -229,6 +275,50 @@ function isChineseSpeechVoice(voice) {
     name.includes("\u4e2d\u6587") ||
     name.includes("\u666e\u901a\u8bdd")
   );
+}
+
+function getVoiceFallbackSlot(ageGroup, genderGroup) {
+  const ageSlots = voiceFallbackSlots[ageGroup] || voiceFallbackSlots.unknown;
+  return ageSlots[genderGroup] ?? ageSlots.unknown ?? 0;
+}
+
+function voiceIncludesAny(voice, hints = []) {
+  const haystack = normalizeVoiceField(`${voice.name || ""} ${voice.voiceURI || ""} ${voice.lang || ""}`);
+
+  return hints.some((hint) => haystack.includes(normalizeVoiceField(hint)));
+}
+
+function getSpeechVoiceMatchScore(voice, voicePack = {}) {
+  let score = 0;
+  const preferredNames = voicePack.voiceNames || [];
+
+  for (let index = 0; index < preferredNames.length; index += 1) {
+    if (voiceIncludesAny(voice, [preferredNames[index]])) {
+      score += 120 - index * 8;
+    }
+  }
+
+  if (voiceIncludesAny(voice, speechVoiceHints[voicePack.genderGroup])) {
+    score += 35;
+  }
+
+  if (voiceIncludesAny(voice, speechVoiceHints[voicePack.ageGroup])) {
+    score += 20;
+  }
+
+  return score;
+}
+
+function sortSpeechVoices(voices) {
+  return [...voices].sort((first, second) => {
+    const localDiff = Number(Boolean(second.localService)) - Number(Boolean(first.localService));
+
+    if (localDiff) {
+      return localDiff;
+    }
+
+    return normalizeVoiceField(first.name).localeCompare(normalizeVoiceField(second.name));
+  });
 }
 
 function getVoiceAgeGroup(speaker = {}) {
@@ -295,28 +385,45 @@ function getVoiceGenderGroup(speaker = {}) {
 function getAssistantVoicePack(speaker = {}) {
   const ageGroup = getVoiceAgeGroup(speaker);
   const genderGroup = getVoiceGenderGroup(speaker);
-  const agePacks = assistantVoicePacks[ageGroup] || assistantVoicePacks.unknown;
+  const selectedAgeGroup = assistantVoicePacks[ageGroup] ? ageGroup : "unknown";
+  const agePacks = assistantVoicePacks[selectedAgeGroup] || assistantVoicePacks.unknown;
+  const selectedGenderGroup = agePacks[genderGroup] ? genderGroup : "unknown";
+  const pack = agePacks[selectedGenderGroup] || agePacks.unknown || assistantVoicePacks.unknown.unknown;
 
-  return agePacks[genderGroup] || agePacks.unknown || assistantVoicePacks.unknown.unknown;
+  return {
+    ...pack,
+    ageGroup: selectedAgeGroup,
+    genderGroup: selectedGenderGroup,
+    voiceSlot: getVoiceFallbackSlot(selectedAgeGroup, selectedGenderGroup),
+    packId: `${selectedAgeGroup}-${selectedGenderGroup}`
+  };
 }
 
 function chooseSpeechVoice(voicePack = {}) {
   refreshSpeechVoices();
 
   const voices = availableSpeechVoices;
-  const chineseVoices = voices.filter(isChineseSpeechVoice);
-  const preferredNames = voicePack.voiceNames || [];
+  const candidates = sortSpeechVoices(voices.filter(isChineseSpeechVoice));
 
-  for (const preferredName of preferredNames) {
-    const normalizedPreferredName = normalizeVoiceField(preferredName);
-    const voice = chineseVoices.find((candidate) => normalizeVoiceField(candidate.name).includes(normalizedPreferredName));
-
-    if (voice) {
-      return voice;
-    }
+  if (!candidates.length) {
+    return undefined;
   }
 
-  return chineseVoices.find((voice) => voice.default) || chineseVoices[0];
+  const rankedVoices = candidates
+    .map((voice, index) => ({
+      voice,
+      index,
+      score: getSpeechVoiceMatchScore(voice, voicePack)
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((first, second) => second.score - first.score || first.index - second.index);
+
+  if (rankedVoices[0]) {
+    return rankedVoices[0].voice;
+  }
+
+  const voiceSlot = Number.isInteger(voicePack.voiceSlot) ? voicePack.voiceSlot : 0;
+  return candidates[voiceSlot % candidates.length];
 }
 
 function setStatus(state, message) {
@@ -384,8 +491,8 @@ function showDialogue(userText, assistantText) {
 function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoice) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = clampSpeechValue(voicePack.rate, 1, 0.75, 1.25);
-  utterance.pitch = clampSpeechValue(voicePack.pitch, 1, 0.7, 1.4);
+  utterance.rate = clampSpeechValue(voicePack.rate, 1, 0.65, 1.35);
+  utterance.pitch = clampSpeechValue(voicePack.pitch, 1, 0.5, 2);
   utterance.volume = 1;
 
   if (voice && !retryWithoutVoice) {
@@ -405,7 +512,9 @@ function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoic
     }
 
     if (voice && !retryWithoutVoice) {
-      window.setTimeout(() => speakAssistantReply(text, { retryWithoutVoice: true }), 80);
+      window.setTimeout(() => {
+        void speakAssistantReply(text, { retryWithoutVoice: true });
+      }, 80);
       return;
     }
 
@@ -417,7 +526,7 @@ function buildAssistantUtterance(text, voicePack, voice, token, retryWithoutVoic
   return utterance;
 }
 
-function speakAssistantReply(text, options = {}) {
+async function speakAssistantReply(text, options = {}) {
   const speechText = String(text || "").trim();
 
   if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
@@ -431,17 +540,29 @@ function speakAssistantReply(text, options = {}) {
   window.clearTimeout(speechRestartTimer);
   const token = (speechPlaybackToken += 1);
   const voicePack = getAssistantVoicePack(latestSpeakerProfile);
-  const voice = options.retryWithoutVoice ? undefined : chooseSpeechVoice(voicePack);
 
   window.speechSynthesis.cancel();
 
-  speechRestartTimer = window.setTimeout(() => {
+  speechRestartTimer = window.setTimeout(async () => {
     if (speechPlaybackToken !== token) {
       return;
     }
 
+    await waitForSpeechVoicesReady();
+
+    if (speechPlaybackToken !== token) {
+      return;
+    }
+
+    const voice = options.retryWithoutVoice ? undefined : chooseSpeechVoice(voicePack);
     const utterance = buildAssistantUtterance(speechText, voicePack, voice, token, Boolean(options.retryWithoutVoice));
     activeAssistantUtterance = utterance;
+    lastAssistantVoicePack = {
+      ...voicePack,
+      selectedVoiceName: voice?.name || "browser-default",
+      selectedVoiceLang: voice?.lang || "zh-CN",
+      retryWithoutVoice: Boolean(options.retryWithoutVoice)
+    };
 
     if (window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
@@ -543,6 +664,16 @@ window.drawtalkUi = {
   speakAssistantReply,
   getAssistantVoicePack,
   chooseSpeechVoice,
+  getLastAssistantVoicePack: () => lastAssistantVoicePack,
+  listSpeechVoices: () => {
+    refreshSpeechVoices();
+    return availableSpeechVoices.map((voice) => ({
+      name: voice.name,
+      lang: voice.lang,
+      localService: Boolean(voice.localService),
+      default: Boolean(voice.default)
+    }));
+  },
   loadVersions,
   renderVersions
 };
@@ -1105,7 +1236,7 @@ async function uploadRecording() {
       latestSpeakerProfile = {};
       clearSpeechInsights();
       setStatus("thinking", "ASR 服务不可用，已使用浏览器识别结果");
-      void handleRecognizedText(fallbackTranscript);
+      void handleRecognizedText(fallbackTranscript, { audioBlob, speakerProfile: latestSpeakerProfile });
       return;
     }
 
