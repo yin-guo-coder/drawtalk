@@ -467,6 +467,22 @@ async function parseVoiceCommand(text, speakerProfile = latestSpeakerProfile) {
   return payload.command;
 }
 
+function buildPendingCommandFromVersion(version) {
+  const fallbackPrompt = version.prompt || version.systemUnderstanding || version.userSpeechText || "";
+
+  return {
+    intent: "generate",
+    subject: version.systemUnderstanding || version.userSpeechText || fallbackPrompt,
+    style: "",
+    aspectRatio: version.params?.aspectRatio || "",
+    mustKeep: [],
+    mustAvoid: [],
+    needConfirmation: true,
+    prompt: fallbackPrompt,
+    baseVersionId: version.id
+  };
+}
+
 async function restoreVersion(command, userText) {
   const response = await fetch("/api/versions/restore", {
     method: "POST",
@@ -487,9 +503,17 @@ async function restoreVersion(command, userText) {
 
   const version = payload.version;
   versions = Array.isArray(payload.versions) ? payload.versions : versions;
-  pendingCommand = null;
   showGeneratedImage(version);
   renderVersions(versions);
+
+  if (command.intent === "continue_from_version") {
+    pendingCommand = buildPendingCommandFromVersion(version);
+    showDialogue(userText, `已切到版本 ${version.id}，可以继续说要怎么修改。`);
+    setStatus("ready", `可以继续修改版本 ${version.id}`);
+    return;
+  }
+
+  pendingCommand = null;
   showDialogue(userText, `已回到版本 ${version.id}。`);
   setStatus("ready", `已回到版本 ${version.id}`);
 }
@@ -508,7 +532,7 @@ async function handleRecognizedText(transcript, speakerProfile = latestSpeakerPr
   try {
     const command = await parseVoiceCommand(trimmedTranscript, speakerProfile);
 
-    if (command.intent === "restore_version") {
+    if (command.intent === "restore_version" || command.intent === "continue_from_version") {
       await restoreVersion(command, trimmedTranscript);
       return;
     }

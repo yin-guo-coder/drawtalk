@@ -1533,6 +1533,39 @@ function parseVersionRestoreCommand(text) {
   };
 }
 
+function parseVersionContinueCommand(text) {
+  const normalizedText = String(text || "").trim();
+  const hasContinueIntent = includesAny(normalizedText, ["继续改", "继续修改", "接着改", "接着修改", "基于"]);
+
+  if (!hasContinueIntent || !includesAny(normalizedText, ["版", "版本"])) {
+    return undefined;
+  }
+
+  if (includesAny(normalizedText, ["上一版", "上一个版本", "前一版", "前一个版本"])) {
+    return {
+      intent: "continue_from_version",
+      versionTarget: "previous",
+      needConfirmation: false,
+      replyToUser: "好的，正在切回上一版，之后可以继续修改。"
+    };
+  }
+
+  const versionMatch = normalizedText.match(/第\s*([0-9一二两三四五六七八九十]+)\s*(?:版|个版本)/u)
+    || normalizedText.match(/([0-9一二两三四五六七八九十]+)\s*(?:版|个版本)/u);
+  const targetVersionId = parseChineseVersionNumber(versionMatch?.[1]);
+
+  if (!targetVersionId) {
+    return undefined;
+  }
+
+  return {
+    intent: "continue_from_version",
+    targetVersionId,
+    needConfirmation: false,
+    replyToUser: `好的，正在切到版本 ${targetVersionId}，之后可以继续修改。`
+  };
+}
+
 function buildGenerateCommand(text, previousCommand, speaker) {
   const aspectRatio = parseAspectRatio(text);
   const command = {
@@ -1568,6 +1601,12 @@ function parseCommand(text, previousCommand, speaker = {}) {
     const error = new Error("Command text is required");
     error.statusCode = 400;
     throw error;
+  }
+
+  const versionContinueCommand = parseVersionContinueCommand(normalizedText);
+
+  if (versionContinueCommand) {
+    return versionContinueCommand;
   }
 
   const versionRestoreCommand = parseVersionRestoreCommand(normalizedText);
