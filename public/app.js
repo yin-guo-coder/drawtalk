@@ -4,8 +4,6 @@ const voiceTitle = document.querySelector("#voice-title");
 const voiceStatus = document.querySelector("#voice-status");
 const imageFrame = document.querySelector("#image-frame");
 const emptyImage = document.querySelector(".empty-image");
-const understandingPanel = document.querySelector("#understanding-panel");
-const understandingText = document.querySelector("#understanding-text");
 const transcriptPreview = document.querySelector("#transcript-preview");
 const speechInsights = document.querySelector("#speech-insights");
 const speechGender = document.querySelector("#speech-gender");
@@ -112,10 +110,8 @@ function setStatus(state, message) {
 
 function showTranscript(text) {
   const trimmed = text.trim();
-  transcriptPreview.hidden = !trimmed;
-  transcriptPreview.textContent = trimmed ? `“${trimmed}”` : "";
-  understandingPanel.hidden = true;
-  understandingText.textContent = "";
+  transcriptPreview.textContent = trimmed ? `“${trimmed}”` : "暂无语音文本";
+  transcriptPreview.classList.toggle("is-empty", !trimmed);
 }
 
 function clearSpeechInsights() {
@@ -158,10 +154,8 @@ function showDialogue(userText, assistantText) {
   }
 
   const content = lines.join("\n");
-  transcriptPreview.hidden = !content;
-  transcriptPreview.textContent = content;
-  understandingPanel.hidden = !assistantText;
-  understandingText.textContent = assistantText || "";
+  transcriptPreview.textContent = content || "暂无语音文本";
+  transcriptPreview.classList.toggle("is-empty", !content);
 
   if (assistantText) {
     speakAssistantReply(assistantText);
