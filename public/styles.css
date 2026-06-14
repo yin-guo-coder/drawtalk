@@ -394,10 +394,15 @@ h2 {
 }
 
 .inpaint-placeholder {
+  display: grid;
+  place-items: center;
   min-height: 96px;
   height: 100%;
   border: 2px dashed rgba(35, 128, 255, 0.74);
   border-radius: 8px;
+  color: #316b9d;
+  font-size: 0.82rem;
+  font-weight: 780;
   background:
     linear-gradient(135deg, rgba(35, 128, 255, 0.12), transparent 52%),
     rgba(35, 128, 255, 0.06);

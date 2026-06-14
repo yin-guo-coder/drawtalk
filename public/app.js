@@ -14,6 +14,7 @@ const speechAge = document.querySelector("#speech-age");
 const speechEmotion = document.querySelector("#speech-emotion");
 const providerSelect = document.querySelector("#provider-select");
 const versionList = document.querySelector("#version-list");
+const inpaintRegionStatus = document.querySelector("#inpaint-region-status");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 const statuses = {
@@ -479,6 +480,15 @@ function showSpeechInsights(payload) {
   speechEmotion.textContent = emotion || "--";
 }
 
+function showInpaintRegion(region) {
+  if (!inpaintRegionStatus) {
+    return;
+  }
+
+  const label = String(region?.label || region?.targetObject || "").trim();
+  inpaintRegionStatus.textContent = label ? `已识别：${label}` : "等待语音识别区域";
+}
+
 function getSpeakerProfile(payload = {}) {
   const speaker = payload.speaker || {};
 
@@ -670,6 +680,7 @@ async function loadVersions() {
 setStatus("idle");
 showTranscript("");
 clearSpeechInsights();
+showInpaintRegion();
 renderVersions();
 refreshSpeechVoices();
 
@@ -691,6 +702,7 @@ window.drawtalkUi = {
   enterWorkbench,
   setStatus,
   showTranscript,
+  showInpaintRegion,
   speakAssistantReply,
   getAssistantVoicePack,
   chooseSpeechVoice,
